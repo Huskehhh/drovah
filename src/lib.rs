@@ -1,9 +1,9 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
 use std::error::Error;
-use std::{fs, thread};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::{fs, thread};
 
 use rocket::response::status;
 use rocket::response::status::NoContent;
@@ -164,7 +164,6 @@ fn get_name_from_url(url: &str) -> Option<String> {
 
 #[post("/webhook", format = "application/json", data = "<webhookdata>")]
 fn github_webhook(webhookdata: Json<WebhookData>) -> NoContent {
-
     thread::spawn(move || {
         let name = &webhookdata.repository.name;
 
