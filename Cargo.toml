@@ -1,0 +1,5 @@
+[package]
+name = "drovah"
+version = "0.1.0"
+authors = ["Jordyn <jordyn@husk.pro>"]
+edition = "2018"
