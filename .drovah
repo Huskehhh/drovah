@@ -1,0 +1,2 @@
+[build]
+commands = ["cargo test", "cargo build"]
