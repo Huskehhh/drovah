@@ -12,15 +12,15 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(args: &[String]) -> Result<Config, &'static str> {
+    pub fn new(args: Vec<&str>) -> Result<Config, &'static str> {
         if args.len() == 0 {
             return Err("Not enough arguments!");
         }
 
-        let command = args[1].clone();
+        let command = args[0].to_string();
 
         return if command.eq_ignore_ascii_case("new") {
-            let url = Some(args[2].clone());
+            let url = Some(args[1].to_string());
 
             Ok(Config {
                 command,
@@ -31,7 +31,7 @@ impl Config {
             || command.eq_ignore_ascii_case("remove")
             || command.eq_ignore_ascii_case("build")
         {
-            let project = Some(args[2].clone());
+            let project = Some(args[1].to_string());
 
             Ok(Config {
                 command,
@@ -74,6 +74,7 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
         }
     } else if config.command.eq_ignore_ascii_case("build") {
         if let Some(project) = config.project {
+            println!("Building '{}'", project);
             let path = Path::new(&project);
 
             if path.exists() && path.is_dir() {
