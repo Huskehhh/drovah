@@ -1,2 +1,5 @@
 [build]
 commands = ["cargo test", "cargo build"]
+
+[archive]
+files = ["target/release/drovah"]

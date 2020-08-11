@@ -103,6 +103,12 @@ fn run_build(project: String) -> Result<(), Box<dyn Error>> {
 
         if run_commands(ci_config.build.commands, &project) {
             println!("Success! '{}' has been built.", project);
+
+            if let Some(files) = ci_config.archive {
+                if archive_files(files.files, &project) {
+                    println!("Successfully archived files for '{}'", project);
+                }
+            }
         } else {
             println!("'{}' has failed to build.", project);
         }
@@ -130,6 +136,34 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
             .expect("Unexpectedly died on commands!");
 
         return result.status.success();
+    }
+
+    false
+}
+
+fn archive_files(files: Vec<String>, project: &str) -> bool {
+    // Iterate all files to be archived, and move them!
+    for file in files {
+        // For each file, build the project path eg: drovah/{path}
+        let project_path = format!("{}/{}", project, file);
+
+        let filename = get_name_from_url(&file).unwrap_or(file);
+
+        let archive_loc_string = format!("archive/{}/{}", project, filename);
+
+        // Build the path
+        let archive_loc = Path::new(&archive_loc_string);
+
+        let path = Path::new(&project_path);
+        if path.exists() {
+            if let Err(e) = fs::copy(path, archive_loc) {
+                eprintln!("Error when archiving files! {}", e);
+            } else {
+                return true;
+            }
+        } else {
+            eprintln!("Path does not exist! {}", project_path);
+        }
     }
 
     false
@@ -202,11 +236,17 @@ struct RepositoryData {
 #[derive(Debug, Deserialize)]
 struct CIConfig {
     build: BuildConfig,
+    archive: Option<ArchiveConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 struct BuildConfig {
     commands: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArchiveConfig {
+    files: Vec<String>,
 }
 
 #[cfg(test)]
@@ -222,15 +262,14 @@ mod tests {
 
     #[test]
     fn toml_test() {
-        let toml_str = r#"[build]
-commands = ["cargo test", "cargo build"]
-    "#;
+        let path = ".drovah";
+        let string = fs::read_to_string(Path::new(path)).unwrap();
 
-        let decoded: CIConfig = toml::from_str(toml_str).unwrap();
+        let decoded: CIConfig = toml::from_str(&string).unwrap();
 
-        println!("{:#?}", decoded.build.commands);
+        println!("{:#?}", decoded);
 
-        assert!(true);
+        assert_eq!(decoded.build.commands.len(), 2);
     }
 
     #[test]
@@ -243,5 +282,13 @@ commands = ["cargo test", "cargo build"]
         println!("{:#?}", decoded.repository.name);
 
         assert_eq!("FakeBlock", decoded.repository.name);
+    }
+
+    #[test]
+    fn test_archive() {
+        let project = "biomebot-rs";
+        let files = vec!["target/debug/biomebot-rs".to_string()];
+
+        assert!(archive_files(files, project));
     }
 }
