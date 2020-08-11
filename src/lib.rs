@@ -292,36 +292,4 @@ mod tests {
         let result = get_name_from_url(url).unwrap();
         assert_eq!("biomebot-rs", result);
     }
-
-    #[test]
-    fn toml_test() {
-        let path = ".drovah";
-        let string = fs::read_to_string(Path::new(path)).unwrap();
-
-        let decoded: CIConfig = toml::from_str(&string).unwrap();
-
-        println!("{:#?}", decoded);
-
-        assert_eq!(decoded.build.commands.len(), 2);
-    }
-
-    #[test]
-    fn json_parse_test() {
-        let path = "example-payload.json";
-        let string = fs::read_to_string(Path::new(path)).unwrap();
-
-        let decoded: WebhookData = serde_json::from_str(&string).unwrap();
-
-        println!("{:#?}", decoded.repository.name);
-
-        assert_eq!("FakeBlock", decoded.repository.name);
-    }
-
-    #[test]
-    fn test_archive() {
-        let project = "biomebot-rs";
-        let files = vec!["target/debug/biomebot-rs".to_string()];
-
-        assert!(archive_files(files, project));
-    }
 }
