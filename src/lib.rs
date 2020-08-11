@@ -166,16 +166,19 @@ fn get_name_from_url(url: &str) -> Option<String> {
 fn github_webhook(webhookdata: Json<WebhookData>) -> NoContent {
     let name = &webhookdata.repository.name;
 
-    // Pull latest changes!
-    let commands = vec!["git pull".to_string()];
-    run_commands(commands, name);
+    let path = Path::new(name);
+    if path.exists() {
+        // Pull latest changes!
+        let commands = vec!["git pull".to_string()];
+        run_commands(commands, name);
 
-    // Then run build and only tell us if we hit errors!
-    if let Err(e) = run_build(name.to_string()) {
-        eprintln!("Error! {}", e);
+        // Then run build and only tell us if we hit errors!
+        if let Err(e) = run_build(name.to_string()) {
+            eprintln!("Error! {}", e);
+        }
     }
 
-    return status::NoContent;
+    status::NoContent
 }
 
 pub fn launch_rocket() {
