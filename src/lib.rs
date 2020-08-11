@@ -1,12 +1,12 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::{fs, thread};
 
-use rocket::response::status;
 use rocket::response::status::NoContent;
+use rocket::response::{status, NamedFile};
 use rocket_contrib::json::Json;
 use serde::Deserialize;
 
@@ -142,6 +142,15 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
 }
 
 fn archive_files(files: Vec<String>, project: &str) -> bool {
+    // Create the archive/project folder if one does not exist!
+    let archive_folder = format!("archive/{}", project);
+    let archive_path = Path::new(&archive_folder);
+    if !archive_path.exists() {
+        if let Err(e) = fs::create_dir_all(archive_path) {
+            eprintln!("Error creating directories: {}, {}", archive_folder, e);
+        }
+    }
+
     // Iterate all files to be archived, and move them!
     for file in files {
         // For each file, build the project path eg: drovah/{path}
@@ -217,9 +226,33 @@ fn github_webhook(webhookdata: Json<WebhookData>) -> NoContent {
     status::NoContent
 }
 
+#[get("/<project>/specific/<file..>")]
+fn project_file(project: String, file: PathBuf) -> Option<NamedFile> {
+    let path = format!("archive/{}/", project);
+    NamedFile::open(Path::new(&path).join(file)).ok()
+}
+
+#[get("/<project>/latest")]
+fn latest_file(project: String) -> Option<NamedFile> {
+    let str_path = format!("archive/{}/", project);
+    let path = Path::new(&str_path);
+
+    if let Ok(dir) = fs::read_dir(path) {
+        let last = dir.last();
+
+        if let Some(some_last) = last {
+            if let Ok(ok_last) = some_last {
+                return NamedFile::open(ok_last.path()).ok();
+            }
+        }
+    }
+
+    None
+}
+
 pub fn launch_rocket() {
     rocket::ignite()
-        .mount("/", routes![github_webhook])
+        .mount("/", routes![github_webhook, project_file, latest_file])
         .launch();
 }
 
