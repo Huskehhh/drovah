@@ -1,9 +1,17 @@
+#![feature(proc_macro_hygiene, decl_macro)]
+
 use std::error::Error;
 use std::fs;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
+use rocket::response::status;
+use rocket::response::status::NoContent;
+use rocket_contrib::json::Json;
 use serde::Deserialize;
+
+#[macro_use]
+extern crate rocket;
 
 pub struct Config {
     command: String,
@@ -74,26 +82,31 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
         }
     } else if config.command.eq_ignore_ascii_case("build") {
         if let Some(project) = config.project {
-            println!("Building '{}'", project);
-            let path = Path::new(&project);
-
-            if path.exists() && path.is_dir() {
-                let mut settings_file_path = String::from(&project);
-                settings_file_path.push_str("/.drovah");
-
-                let ci_settings_file = Path::new(&settings_file_path);
-                let settings_string = fs::read_to_string(ci_settings_file)?;
-                let ci_config: CIConfig = toml::from_str(&settings_string)?;
-
-                if run_commands(ci_config.build.commands, &project) {
-                    println!("Success! '{}' has been built.", project);
-                } else {
-                    println!("'{}' has failed to build.", project);
-                }
-            }
+            run_build(project)?;
         }
     }
 
+    Ok(())
+}
+
+fn run_build(project: String) -> Result<(), Box<dyn Error>> {
+    println!("Building '{}'", project);
+    let path = Path::new(&project);
+
+    if path.exists() && path.is_dir() {
+        let mut settings_file_path = String::from(&project);
+        settings_file_path.push_str("/.drovah");
+
+        let ci_settings_file = Path::new(&settings_file_path);
+        let settings_string = fs::read_to_string(ci_settings_file)?;
+        let ci_config: CIConfig = toml::from_str(&settings_string)?;
+
+        if run_commands(ci_config.build.commands, &project) {
+            println!("Success! '{}' has been built.", project);
+        } else {
+            println!("'{}' has failed to build.", project);
+        }
+    }
     Ok(())
 }
 
@@ -149,6 +162,38 @@ fn get_name_from_url(url: &str) -> Option<String> {
     None
 }
 
+#[post("/user", format = "application/json", data = "<webhookdata>")]
+fn github_webhook(webhookdata: Json<WebhookData>) -> NoContent {
+    let name = &webhookdata.repository.name;
+
+    // Pull latest changes!
+    let commands = vec!["git pull".to_string()];
+    run_commands(commands, name);
+
+    // Then run build and only tell us if we hit errors!
+    if let Err(e) = run_build(name.to_string()) {
+        eprintln!("Error! {}", e);
+    }
+
+    return status::NoContent;
+}
+
+pub fn launch_rocket() {
+    rocket::ignite()
+        .mount("/webhook", routes![github_webhook])
+        .launch();
+}
+
+#[derive(Debug, Deserialize)]
+struct WebhookData {
+    repository: RepositoryData,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepositoryData {
+    name: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct CIConfig {
     build: BuildConfig,
@@ -181,5 +226,17 @@ commands = ["cargo test", "cargo build"]
         println!("{:#?}", decoded.build.commands);
 
         assert!(true);
+    }
+
+    #[test]
+    fn json_parse_test() {
+        let path = "example-payload.json";
+        let string = fs::read_to_string(Path::new(path)).unwrap();
+
+        let decoded: WebhookData = serde_json::from_str(&string).unwrap();
+
+        println!("{:#?}", decoded.repository.name);
+
+        assert_eq!("FakeBlock", decoded.repository.name);
     }
 }

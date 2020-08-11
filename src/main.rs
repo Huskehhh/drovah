@@ -1,7 +1,10 @@
-use drovah::Config;
+use drovah::{launch_rocket, Config};
 use std::{io, process, thread};
 
 fn main() {
+    thread::spawn(|| {
+        launch_rocket();
+    });
     loop {
         let mut input = String::new();
 
