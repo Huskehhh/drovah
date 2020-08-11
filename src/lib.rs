@@ -27,7 +27,10 @@ impl Config {
                 url,
                 project: None,
             })
-        } else if command.eq_ignore_ascii_case("delete") || command.eq_ignore_ascii_case("build") {
+        } else if command.eq_ignore_ascii_case("delete")
+            || command.eq_ignore_ascii_case("remove")
+            || command.eq_ignore_ascii_case("build")
+        {
             let project = Some(args[2].clone());
 
             Ok(Config {
@@ -46,16 +49,27 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
         if let Some(url) = config.url {
             if let Some(name) = get_name_from_url(&url) {
                 let output = clone(url).wait_with_output()?;
-                println!("Creating new project '{}'!", name);
                 println!("{:?}", output);
+
+                if output.status.success() {
+                    println!("Added new project '{}'!", name);
+                } else {
+                    println!("Failed to add new project '{}'!", name);
+                }
             }
         }
-    } else if config.command.eq_ignore_ascii_case("remove") {
+    } else if config.command.eq_ignore_ascii_case("remove")
+        || config.command.eq_ignore_ascii_case("delete")
+    {
         if let Some(project) = config.project {
             let path = Path::new(&project);
 
             if path.exists() && path.is_dir() {
-                delete(path);
+                if delete(path) {
+                    println!("Success! '{}' has been removed.", project);
+                } else {
+                    println!("'{}' failed to delete.", project);
+                }
             }
         }
     } else if config.command.eq_ignore_ascii_case("build") {
@@ -70,7 +84,11 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
                 let settings_string = fs::read_to_string(ci_settings_file)?;
                 let ci_config: CIConfig = toml::from_str(&settings_string)?;
 
-                run_commands(ci_config.build.commands);
+                if run_commands(ci_config.build.commands, &project) {
+                    println!("Success! '{}' has been built.", project);
+                } else {
+                    println!("'{}' has failed to build.", project);
+                }
             }
         }
     }
@@ -78,8 +96,7 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_commands(commands: Vec<String>) -> Vec<Child> {
-    let mut children = vec![];
+fn run_commands(commands: Vec<String>, directory: &str) -> bool {
     for command in commands {
         let split: Vec<&str> = command.split(" ").collect();
 
@@ -88,14 +105,20 @@ fn run_commands(commands: Vec<String>) -> Vec<Child> {
             .expect("Error, commands in .drovah formatted wrong!");
 
         let process = Command::new(program)
+            .current_dir(directory)
             .args(&split[1..])
+            .stdout(Stdio::piped())
             .spawn()
             .expect("run_commands failed, are they formatted correctly? is the program installed?");
 
-        children.push(process);
+        let result = process
+            .wait_with_output()
+            .expect("Unexpectedly died on commands!");
+
+        return result.status.success();
     }
 
-    children
+    false
 }
 
 fn clone(url: String) -> Child {
@@ -107,10 +130,12 @@ fn clone(url: String) -> Child {
         .expect("'git clone' command failed to start - is git installed?")
 }
 
-fn delete(path: &Path) {
+fn delete(path: &Path) -> bool {
     if let Err(e) = fs::remove_dir_all(path) {
-        eprintln!("Error deleting path {}", e);
+        eprintln!("Error deleting path '{}'", e);
+        return false;
     }
+    true
 }
 
 fn get_name_from_url(url: &str) -> Option<String> {
