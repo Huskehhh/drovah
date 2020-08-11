@@ -1,7 +1,7 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
 use std::error::Error;
-use std::fs;
+use std::{fs, thread};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
@@ -162,28 +162,31 @@ fn get_name_from_url(url: &str) -> Option<String> {
     None
 }
 
-#[post("/user", format = "application/json", data = "<webhookdata>")]
+#[post("/webhook", format = "application/json", data = "<webhookdata>")]
 fn github_webhook(webhookdata: Json<WebhookData>) -> NoContent {
-    let name = &webhookdata.repository.name;
 
-    let path = Path::new(name);
-    if path.exists() {
-        // Pull latest changes!
-        let commands = vec!["git pull".to_string()];
-        run_commands(commands, name);
+    thread::spawn(move || {
+        let name = &webhookdata.repository.name;
 
-        // Then run build and only tell us if we hit errors!
-        if let Err(e) = run_build(name.to_string()) {
-            eprintln!("Error! {}", e);
+        let path = Path::new(name);
+        if path.exists() {
+            // Pull latest changes!
+            let commands = vec!["git pull".to_string()];
+            run_commands(commands, name);
+
+            // Then run build and only tell us if we hit errors!
+            if let Err(e) = run_build(name.to_string()) {
+                eprintln!("Error! {}", e);
+            }
         }
-    }
+    });
 
     status::NoContent
 }
 
 pub fn launch_rocket() {
     rocket::ignite()
-        .mount("/webhook", routes![github_webhook])
+        .mount("/", routes![github_webhook])
         .launch();
 }
 
