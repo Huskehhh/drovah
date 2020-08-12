@@ -407,12 +407,8 @@ mod tests {
 
     #[test]
     fn test_get_status_badge() {
-        let drovah_config = DrovahConfig {
-            mongo: MongoConfig {
-                mongo_connection_string: "mongodb://localhost:27017".to_owned(),
-                mongo_db: "drovah".to_owned(),
-            },
-        };
+        let conf_str = fs::read_to_string(Path::new("Drovah.toml")).unwrap();
+        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
 
         let client: rocket::local::Client = Client::new(launch_rocket(drovah_config)).unwrap();
         let response = client.get("/BiomeChat/statusBadge").dispatch();
