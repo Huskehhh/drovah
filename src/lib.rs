@@ -13,11 +13,10 @@ use mongodb::{
 };
 use rocket::http::{ContentType, Status};
 use rocket::response::NamedFile;
-use rocket::{Response, Rocket, State, Request, Data, data};
+use rocket::{Response, Rocket, State};
 use rocket_contrib::json::Json;
 use serde::Deserialize;
-use std::io::{Cursor, Read};
-use rocket::data::{FromData, Outcome, Transform};
+use std::io::{Cursor};
 
 #[macro_use]
 extern crate rocket;
