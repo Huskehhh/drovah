@@ -296,7 +296,7 @@ fn latest_file(project: String) -> Option<NamedFile> {
     None
 }
 
-#[get("/<project>/statusBadge")]
+#[get("/<project>/badge")]
 fn status_badge(project: String, database: State<Database>) -> Response<'static> {
     let status_badge = get_project_status_badge(project, database);
 

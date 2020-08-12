@@ -75,7 +75,7 @@ Once drovah is running, simply type ``new <url>`` where url is the git url of th
 - Successful build archival
 - Latest build retrieval through ``http://host:port/<project>/latest``
 - Specific file retrieval through ``http://host:port/<project>/specific/<filename>``
-- Build status banner retrievable through ``http://host:port/<project>/statusBadge``
+- Build status banner retrievable through ``http://host:port/<project>/badge``
 
 ## Commands
 
