@@ -1,4 +1,4 @@
-# drovah
+# drovah ![build status](https://ci.husk.pro/drovah/statusBadge)
 Simple, fast, standalone CI written in Rust
 
 This project is entirely for fun and building on my rust knowledge,
