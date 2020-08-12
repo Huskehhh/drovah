@@ -21,7 +21,7 @@ mongo_db = "drovah""#;
     let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
 
     thread::spawn(|| {
-        launch_rocket(drovah_config);
+        launch_rocket(drovah_config).launch();
     });
     loop {
         let mut input = String::new();
