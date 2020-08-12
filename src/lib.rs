@@ -1,14 +1,22 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
 use std::error::Error;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::{fs, thread};
 
-use rocket::response::status::NoContent;
-use rocket::response::{status, NamedFile};
+use badge::{Badge, BadgeOptions};
+use mongodb::sync::Database;
+use mongodb::{
+    bson::{doc, Bson},
+    sync::Client,
+};
+use rocket::http::{ContentType, Status};
+use rocket::response::NamedFile;
+use rocket::{Response, Rocket, State};
 use rocket_contrib::json::Json;
 use serde::Deserialize;
+use std::io::Cursor;
 
 #[macro_use]
 extern crate rocket;
@@ -17,6 +25,43 @@ pub struct Config {
     command: String,
     url: Option<String>,
     project: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebhookData {
+    repository: RepositoryData,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepositoryData {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CIConfig {
+    build: BuildConfig,
+    archive: Option<ArchiveConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuildConfig {
+    commands: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArchiveConfig {
+    files: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DrovahConfig {
+    mongo: MongoConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct MongoConfig {
+    mongo_connection_string: String,
+    mongo_db: String,
 }
 
 impl Config {
@@ -80,16 +125,12 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-    } else if config.command.eq_ignore_ascii_case("build") {
-        if let Some(project) = config.project {
-            run_build(project)?;
-        }
     }
 
     Ok(())
 }
 
-fn run_build(project: String) -> Result<(), Box<dyn Error>> {
+fn run_build(project: String, database: State<Database>) -> Result<(), Box<dyn Error>> {
     println!("Building '{}'", project);
     let path = Path::new(&project);
 
@@ -109,8 +150,11 @@ fn run_build(project: String) -> Result<(), Box<dyn Error>> {
                     println!("Successfully archived files for '{}'", project);
                 }
             }
+
+            save_project_build_status(project, "passing".to_owned(), database);
         } else {
             println!("'{}' has failed to build.", project);
+            save_project_build_status(project, "failing".to_owned(), database);
         }
     }
     Ok(())
@@ -206,24 +250,26 @@ fn get_name_from_url(url: &str) -> Option<String> {
 }
 
 #[post("/webhook", format = "application/json", data = "<webhookdata>")]
-fn github_webhook(webhookdata: Json<WebhookData>) -> NoContent {
-    thread::spawn(move || {
-        let name = &webhookdata.repository.name;
+fn github_webhook(webhookdata: Json<WebhookData>, database: State<Database>) -> Status {
+    let name = &webhookdata.repository.name;
 
-        let path = Path::new(name);
-        if path.exists() {
-            // Pull latest changes!
-            let commands = vec!["git pull".to_string()];
-            run_commands(commands, name);
+    let path = Path::new(name);
+    if path.exists() {
+        // Pull latest changes!
+        let commands = vec!["git pull".to_owned()];
+        run_commands(commands, name);
 
-            // Then run build and only tell us if we hit errors!
-            if let Err(e) = run_build(name.to_string()) {
+        match run_build(name.to_string(), database) {
+            Ok(_) => {
+                return Status::NoContent;
+            }
+            Err(e) => {
                 eprintln!("Error! {}", e);
             }
         }
-    });
+    }
 
-    status::NoContent
+    Status::NotAcceptable
 }
 
 #[get("/<project>/specific/<file..>")]
@@ -250,46 +296,156 @@ fn latest_file(project: String) -> Option<NamedFile> {
     None
 }
 
-pub fn launch_rocket() {
-    rocket::ignite()
-        .mount("/", routes![github_webhook, project_file, latest_file])
-        .launch();
+#[get("/<project>/statusBadge")]
+fn status_badge(project: String, database: State<Database>) -> Response<'static> {
+    let status_badge = get_project_status_badge(project, database);
+
+    if !status_badge.is_empty() {
+        let response = Response::build()
+            .status(Status::Ok)
+            .header(ContentType::SVG)
+            .sized_body(Cursor::new(status_badge))
+            .finalize();
+
+        return response;
+    }
+
+    Response::build().status(Status::NotFound).finalize()
 }
 
-#[derive(Debug, Deserialize)]
-struct WebhookData {
-    repository: RepositoryData,
+fn save_project_build_status(project: String, status: String, database: State<Database>) {
+    let document = doc! { "project": &project, "buildStatus": &status };
+
+    let collection = database.collection("build_statuses");
+
+    let build_status = get_project_build_status(&project, &database);
+
+    // If it's not already in db - insert, otherwise just update
+    if build_status.is_empty() {
+        if let Err(e) = collection.insert_one(document, None) {
+            eprintln!(
+                "Error adding document for project {}, with status of {}, error: {:#?}",
+                project, status, e
+            );
+        }
+    } else {
+        let filter = doc! { "project": &project };
+
+        if let Err(e) = collection.update_one(filter, document, None) {
+            eprintln!(
+                "Error updating document for project {}, with status of {}, error: {:#?}",
+                project, status, e
+            );
+        }
+    }
 }
 
-#[derive(Debug, Deserialize)]
-struct RepositoryData {
-    name: String,
+fn get_project_status_badge(project: String, database: State<Database>) -> String {
+    let badge_options: BadgeOptions;
+
+    let build_status = get_project_build_status(&project, &database);
+    if build_status.eq("passing") {
+        badge_options = BadgeOptions {
+            subject: "drovah".to_owned(),
+            status: build_status,
+            color: "#4c1".to_owned(),
+        };
+    } else {
+        badge_options = BadgeOptions {
+            subject: "drovah".to_owned(),
+            status: build_status,
+            color: "#ed2e25".to_owned(),
+        };
+    }
+
+    if let Ok(badge) = Badge::new(badge_options) {
+        let svg = badge.to_svg();
+        return svg;
+    }
+
+    "".to_owned()
 }
 
-#[derive(Debug, Deserialize)]
-struct CIConfig {
-    build: BuildConfig,
-    archive: Option<ArchiveConfig>,
+fn get_project_build_status(project: &String, database: &State<Database>) -> String {
+    let collection = database.collection("build_statuses");
+
+    if let Ok(cursor) = collection.find(doc! { "project": project }, None) {
+        if let Some(doc_result) = cursor.last() {
+            if let Ok(document) = doc_result {
+                if let Some(status) = document.get("buildStatus").and_then(Bson::as_str) {
+                    return status.to_owned();
+                }
+            }
+        }
+    }
+
+    "".to_owned()
 }
 
-#[derive(Debug, Deserialize)]
-struct BuildConfig {
-    commands: Vec<String>,
-}
+pub fn launch_rocket(drovah_config: DrovahConfig) -> Rocket {
+    let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string).unwrap();
+    let database = client.database(&drovah_config.mongo.mongo_db);
 
-#[derive(Debug, Deserialize)]
-struct ArchiveConfig {
-    files: Vec<String>,
+    rocket::ignite().manage(client).manage(database).mount(
+        "/",
+        routes![github_webhook, project_file, latest_file, status_badge],
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rocket::http::Status;
+    use rocket::local::Client;
 
     #[test]
     fn get_name_from_url_test() {
         let url = "https://github.com/Huskehhh/biomebot-rs";
         let result = get_name_from_url(url).unwrap();
         assert_eq!("biomebot-rs", result);
+    }
+
+    #[test]
+    fn test_get_status_badge() {
+        let drovah_config = DrovahConfig {
+            mongo: MongoConfig {
+                mongo_connection_string: "mongodb://localhost:27017".to_owned(),
+                mongo_db: "drovah".to_owned(),
+            },
+        };
+
+        let client: rocket::local::Client = Client::new(launch_rocket(drovah_config)).unwrap();
+        let response = client.get("/BiomeChat/statusBadge").dispatch();
+        let fail_response = client.get("/asdasdasdasd/statusBadge").dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        assert_eq!(fail_response.status(), Status::NotFound);
+    }
+
+    #[test]
+    fn test_autogen_drovah() {
+        let path = Path::new("Drovah.toml");
+
+        let default_file = r#"[mongo]
+mongo_connection_string = "mongodb://localhost:27017"
+mongo_db = "drovah""#;
+
+        if path.exists() {
+            fs::remove_file(path).expect("Error removing file");
+        }
+
+        fs::write(path, default_file).expect("Error creating file");
+
+        assert!(path.exists());
+
+        let read_from_file = fs::read_to_string(path).expect("Error reading from file");
+        let drovah_config: DrovahConfig =
+            toml::from_str(&read_from_file).expect("Error parsing toml");
+
+        assert_eq!(
+            drovah_config.mongo.mongo_connection_string,
+            "mongodb://localhost:27017"
+        );
+        assert_ne!(drovah_config.mongo.mongo_connection_string, "");
     }
 }

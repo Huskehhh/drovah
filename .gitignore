@@ -13,3 +13,7 @@ rls/
 *.iml
 .env
 info.txt
+
+archive/
+Drovah.toml
+Bio*

@@ -11,9 +11,23 @@ Please note that it is still very much WIP!
 ### Drovah
 Prerequisites:
 - git
+- MongoDB server
 
 Compile using ``cargo build --release`` 
 and run the built artifact found in ``target/release/``
+
+#### Drovah configuration:
+A ``Drovah.toml`` file will be created automatically, and will contain the following:
+
+```toml
+[mongo]
+mongo_connection_string = "mongodb://localhost:27017"
+mongo_db = "drovah"
+```
+
+Mongo is used in order to store data related to builds!
+
+#### Webserver configuration:
 
 Optionally you can use a Rocket.toml to [alter the configuration of the web server](https://rocket.rs/v0.4/guide/configuration/#rockettoml)
 
@@ -55,6 +69,7 @@ Once drovah is running, simply type ``new <url>`` where url is the git url of th
 - Successful build archival
 - Latest build retrieval through ``http://host:port/<project>/latest``
 - Specific file retrieval through ``http://host:port/<project>/specific/<filename>``
+- Build status banner retrievable through ``http://host:port/<project>/statusBadge``
 
 ## Commands
 
@@ -62,17 +77,15 @@ Once drovah is running, simply type ``new <url>`` where url is the git url of th
 | --------------- | ---------------- |
 | new \<url> | Creates new tracked repo
 | remove \<project name> | Removes tracked project
-| build \<project name> | Manually builds project
 
 ## Things to come:
 - [ ] Wildcard matching for file archival
-- [ ] Build status banner(s)
 - [ ] Numerous build file(s) archival (at the moment it's only one build)
-- [ ] Configuration to enable/disable stuff
-- [ ] More useful unit tests
+- [ ] More config options to enable/disable stuff
 - [ ] Cleanup stdout
-- [ ] Post archival commands
+- [ ] Post archival commands ?
 - [ ] Logging
 - [ ] Benchmark
 - [ ] Inspect for security
 - [ ] Frontend?
+- [ ] Swap to async mongo + rocket
