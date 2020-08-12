@@ -78,6 +78,14 @@ Once drovah is running, simply type ``new <url>`` where url is the git url of th
 | new \<url> | Creates new tracked repo
 | remove \<project name> | Removes tracked project
 
+### Note: if you wish to disable the build status badge, please also remove the data from the Mongo collection manually
+
+## Manually managing projects
+
+Just ``git clone <repo>`` in the root folder where drovah is, and then webhooks will be supported instantly
+
+Similarly, just remove the folders you no longer want to track
+
 ## Things to come:
 - [ ] Wildcard matching for file archival
 - [ ] Numerous build file(s) archival (at the moment it's only one build)
