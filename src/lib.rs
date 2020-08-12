@@ -13,10 +13,11 @@ use mongodb::{
 };
 use rocket::http::{ContentType, Status};
 use rocket::response::NamedFile;
-use rocket::{Response, Rocket, State};
+use rocket::{Response, Rocket, State, Request, Data, data};
 use rocket_contrib::json::Json;
 use serde::Deserialize;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
+use rocket::data::{FromData, Outcome, Transform};
 
 #[macro_use]
 extern crate rocket;
@@ -29,6 +30,7 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 struct WebhookData {
+
     repository: RepositoryData,
 }
 
@@ -41,6 +43,7 @@ struct RepositoryData {
 struct CIConfig {
     build: BuildConfig,
     archive: Option<ArchiveConfig>,
+    postarchive: Option<PostArchiveConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +57,11 @@ struct ArchiveConfig {
 }
 
 #[derive(Debug, Deserialize)]
+struct PostArchiveConfig {
+    commands: Vec<String>
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DrovahConfig {
     mongo: MongoConfig,
 }
@@ -63,6 +71,9 @@ struct MongoConfig {
     mongo_connection_string: String,
     mongo_db: String,
 }
+
+#[derive(Debug, PartialEq)]
+pub struct SignedPayload(pub String);
 
 impl Config {
     pub fn new(args: Vec<&str>) -> Result<Config, &'static str> {
@@ -148,6 +159,14 @@ fn run_build(project: String, database: State<Database>) -> Result<(), Box<dyn E
             if let Some(files) = ci_config.archive {
                 if archive_files(files.files, &project) {
                     println!("Successfully archived files for '{}'", project);
+
+                    if let Some(post_archive) = ci_config.postarchive {
+                        if run_commands(post_archive.commands, &project) {
+                            println!("Successfully ran post-archive commands for '{}'", project);
+                        } else {
+                            println!("Error occurred running post-archive commands for '{}'", ".");
+                        }
+                    }
                 }
             }
 
@@ -185,8 +204,7 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
     false
 }
 
-fn archive_files(files: Vec<String>, project: &str) -> bool {
-    // Create the archive/project folder if one does not exist!
+fn archive_files(files_to_archive: Vec<String>, project: &str) -> bool {
     let archive_folder = format!("archive/{}", project);
     let archive_path = Path::new(&archive_folder);
     if !archive_path.exists() {
@@ -195,31 +213,14 @@ fn archive_files(files: Vec<String>, project: &str) -> bool {
         }
     }
 
-    // Iterate all files to be archived, and move them!
-    for file in files {
-        // For each file, build the project path eg: drovah/{path}
-        let project_path = format!("{}/{}", project, file);
-
-        let filename = get_name_from_url(&file).unwrap_or(file);
-
-        let archive_loc_string = format!("archive/{}/{}", project, filename);
-
-        // Build the path
-        let archive_loc = Path::new(&archive_loc_string);
-
-        let path = Path::new(&project_path);
-        if path.exists() {
-            if let Err(e) = fs::copy(path, archive_loc) {
-                eprintln!("Error when archiving files! {}", e);
-            } else {
-                return true;
-            }
-        } else {
-            eprintln!("Path does not exist! {}", project_path);
-        }
+    let mut commands = vec![];
+    for file in files_to_archive {
+        let appended_path = format!("{}/{}", project, file);
+        let command = format!("cp -R {} {}", appended_path, format!("{}/", archive_folder));
+        commands.push(command);
     }
 
-    false
+    run_commands(commands, ".")
 }
 
 fn clone(url: String) -> Child {

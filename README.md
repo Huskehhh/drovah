@@ -8,15 +8,16 @@ Please note that it is still very much WIP!
  
 ## Setup
 
-### Drovah
+### drovah
 Prerequisites:
 - git
 - MongoDB server
+- Linux-like 'cp'
 
 Compile using ``cargo build --release`` 
 and run the built artifact found in ``target/release/``
 
-#### Drovah configuration:
+#### drovah configuration:
 A ``Drovah.toml`` file will be created automatically, and will contain the following:
 
 ```toml
@@ -48,13 +49,18 @@ Example ``.drovah`` file
 commands = ["gradle clean build"]
 
 [archive]
-files = ["build/libs/someproject-1.0-SNAPSHOT.jar"]
+files = ["build/libs/someproject-*.jar"]
+
+[postarchive]
+commands = ["echo 'woohoo' >> somefile"]
 ```
 
 #### Explanation of configuration options
 ``build`` must be an array of strings which will represent your commands, they are run in order.
 
-(OPTIONAL) ``archive`` must be an array of strings representing the relative path of your project
+(OPTIONAL) ``archive`` must be an array of strings containing path/pattern of files, relative path of your project
+
+(OPTIONAL) ``postarchive`` must be an array of strings which will represent commands to be run AFTER successful builds, they are run in order.
 
 ## Adding tracked projects
 
@@ -87,13 +93,11 @@ Just ``git clone <repo>`` in the root folder where drovah is, and then webhooks 
 Similarly, just remove the folders you no longer want to track
 
 ## Things to come:
-- [ ] Wildcard matching for file archival
 - [ ] Numerous build file(s) archival (at the moment it's only one build)
 - [ ] More config options to enable/disable stuff
+- [ ] Swap to async mongo + rocket
 - [ ] Cleanup stdout
-- [ ] Post archival commands ?
-- [ ] Logging
+- [ ] Logging to file
 - [ ] Benchmark
 - [ ] Inspect for security
-- [ ] Frontend?
-- [ ] Swap to async mongo + rocket
+- [ ] Frontend
