@@ -1,6 +1,6 @@
 use drovah::{launch_rocket, Config, DrovahConfig};
 use std::path::Path;
-use std::{fs, io, process, thread};
+use std::{fs, io, thread};
 
 fn main() {
     let path = Path::new("Drovah.toml");
@@ -20,9 +20,12 @@ mongo_db = "drovah""#;
     let conf_str = fs::read_to_string(path).unwrap();
     let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
 
+    // Launch rocket
     thread::spawn(|| {
         launch_rocket(drovah_config).launch();
     });
+
+    // Continually listen for user input
     loop {
         let mut input = String::new();
 
@@ -32,14 +35,10 @@ mongo_db = "drovah""#;
                     let trimmed = input.trim_end().to_string();
                     let args: Vec<&str> = trimmed.split(" ").collect();
 
-                    let config = Config::new(args).unwrap_or_else(|err| {
-                        eprintln!("Problem parsing arguments: {}", err);
-                        process::exit(1);
-                    });
-
-                    if let Err(e) = drovah::run(config) {
-                        eprintln!("Application error: {}", e);
-                        process::exit(1);
+                    if let Ok(config) = Config::new(args) {
+                        if let Err(e) = drovah::run(config) {
+                            eprintln!("Application error: {}", e);
+                        }
                     }
                 } else {
                     println!("Please enter an actual input!");

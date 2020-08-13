@@ -16,7 +16,7 @@ use rocket::response::NamedFile;
 use rocket::{Response, Rocket, State};
 use rocket_contrib::json::Json;
 use serde::Deserialize;
-use std::io::{Cursor};
+use std::io::Cursor;
 
 #[macro_use]
 extern crate rocket;
@@ -29,7 +29,6 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 struct WebhookData {
-
     repository: RepositoryData,
 }
 
@@ -57,7 +56,7 @@ struct ArchiveConfig {
 
 #[derive(Debug, Deserialize)]
 struct PostArchiveConfig {
-    commands: Vec<String>
+    commands: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,7 +139,7 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_build(project: String, database: State<Database>) -> Result<(), Box<dyn Error>> {
+fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>> {
     println!("Building '{}'", project);
     let path = Path::new(&project);
 
@@ -259,7 +258,7 @@ fn github_webhook(webhookdata: Json<WebhookData>, database: State<Database>) -> 
         let commands = vec!["git pull".to_owned()];
         run_commands(commands, name);
 
-        match run_build(name.to_string(), database) {
+        match run_build(name.to_string(), database.inner()) {
             Ok(_) => {
                 return Status::NoContent;
             }
@@ -298,7 +297,7 @@ fn latest_file(project: String) -> Option<NamedFile> {
 
 #[get("/<project>/badge")]
 fn status_badge(project: String, database: State<Database>) -> Response<'static> {
-    let status_badge = get_project_status_badge(project, database);
+    let status_badge = get_project_status_badge(project, database.inner());
 
     if !status_badge.is_empty() {
         let response = Response::build()
@@ -313,7 +312,7 @@ fn status_badge(project: String, database: State<Database>) -> Response<'static>
     Response::build().status(Status::NotFound).finalize()
 }
 
-fn save_project_build_status(project: String, status: String, database: State<Database>) {
+fn save_project_build_status(project: String, status: String, database: &Database) {
     let document = doc! { "project": &project, "buildStatus": &status };
 
     let collection = database.collection("build_statuses");
@@ -340,7 +339,7 @@ fn save_project_build_status(project: String, status: String, database: State<Da
     }
 }
 
-fn get_project_status_badge(project: String, database: State<Database>) -> String {
+fn get_project_status_badge(project: String, database: &Database) -> String {
     let badge_options: BadgeOptions;
 
     let build_status = get_project_build_status(&project, &database);
@@ -366,7 +365,7 @@ fn get_project_status_badge(project: String, database: State<Database>) -> Strin
     "".to_owned()
 }
 
-fn get_project_build_status(project: &String, database: &State<Database>) -> String {
+fn get_project_build_status(project: &String, database: &Database) -> String {
     let collection = database.collection("build_statuses");
 
     if let Ok(cursor) = collection.find(doc! { "project": project }, None) {
