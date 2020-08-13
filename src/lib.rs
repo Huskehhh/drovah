@@ -124,7 +124,8 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
         || config.command.eq_ignore_ascii_case("delete")
     {
         if let Some(project) = config.project {
-            let path = Path::new(&project);
+            let project_path = format!("data/projects/{}", project);
+            let path = Path::new(&project_path);
 
             if path.exists() && path.is_dir() {
                 if delete(path) {
@@ -141,17 +142,16 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
 fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>> {
     println!("Building '{}'", project);
-    let path = Path::new(&project);
+    let project_path = format!("data/projects/{}", project);
+    let path = Path::new(&project_path);
 
     if path.exists() && path.is_dir() {
-        let mut settings_file_path = String::from(&project);
-        settings_file_path.push_str("/.drovah");
-
+        let settings_file_path = format!("{}/.drovah", project_path);
         let ci_settings_file = Path::new(&settings_file_path);
         let settings_string = fs::read_to_string(ci_settings_file)?;
         let ci_config: CIConfig = toml::from_str(&settings_string)?;
 
-        if run_commands(ci_config.build.commands, &project) {
+        if run_commands(ci_config.build.commands, &project_path) {
             println!("Success! '{}' has been built.", project);
 
             if let Some(files) = ci_config.archive {
@@ -159,12 +159,14 @@ fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>>
                     println!("Successfully archived files for '{}'", project);
 
                     if let Some(post_archive) = ci_config.postarchive {
-                        if run_commands(post_archive.commands, &project) {
+                        if run_commands(post_archive.commands, &project_path) {
                             println!("Successfully ran post-archive commands for '{}'", project);
                         } else {
                             println!("Error occurred running post-archive commands for '{}'", ".");
                         }
                     }
+                } else {
+                    println!("Failed to archive files for '{}'", project);
                 }
             }
 
@@ -181,9 +183,7 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
     for command in commands {
         let split: Vec<&str> = command.split(" ").collect();
 
-        let program = split
-            .first()
-            .expect("Error, commands in .drovah formatted wrong!");
+        let program = split.first().expect("Error, commands are formatted wrong!");
 
         let process = Command::new(program)
             .current_dir(directory)
@@ -203,7 +203,7 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
 }
 
 fn archive_files(files_to_archive: Vec<String>, project: &str) -> bool {
-    let archive_folder = format!("archive/{}", project);
+    let archive_folder = format!("data/archive/{}/", project);
     let archive_path = Path::new(&archive_folder);
     if !archive_path.exists() {
         if let Err(e) = fs::create_dir_all(archive_path) {
@@ -211,20 +211,70 @@ fn archive_files(files_to_archive: Vec<String>, project: &str) -> bool {
         }
     }
 
-    let mut commands = vec![];
-    for file in files_to_archive {
-        let appended_path = format!("{}/{}", project, file);
-        let command = format!("cp -R {} {}", appended_path, format!("{}/", archive_folder));
-        commands.push(command);
+    for file_to_match in files_to_archive {
+        let path_to_search = format!("data/projects/{}/{}", project, file_to_match);
+        if let Some(matched) = match_filename_to_file(&path_to_search) {
+            let matched_file_name = matched.split("/").last().unwrap();
+            let to = format!("data/archive/{}/{}", project, matched_file_name);
+            return copy(&matched, &to);
+        }
     }
 
-    run_commands(commands, ".")
+    false
+}
+
+fn match_filename_to_file(filename: &str) -> Option<String> {
+    let path = Path::new(filename);
+
+    // If the path is already a file, no need to process further
+    if path.is_file() {
+        let path_result = String::from(path.to_str().unwrap());
+        return Option::Some(path_result);
+    }
+
+    // If not, lets look for it
+    let file_to_look_for = filename.split("/").last().unwrap();
+
+    // Find all files starting with
+    if let Some(path_parent) = path.parent() {
+        if let Ok(paths) = fs::read_dir(path_parent) {
+            for files in paths {
+                if let Ok(file) = files {
+                    if file
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(&file_to_look_for)
+                    {
+                        let path = file.path().to_string_lossy().to_string();
+                        return Option::Some(path);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn copy(from_str: &str, to_str: &str) -> bool {
+    let from = Path::new(from_str);
+    let to = Path::new(to_str);
+
+    println!("Copying {} -> {}", from_str, to_str);
+
+    if let Err(e) = fs::copy(from, to) {
+        eprintln!("Error copying file {} -> {}, {}", from_str, to_str, e);
+        return false;
+    }
+
+    true
 }
 
 fn clone(url: String) -> Child {
     Command::new("git")
         .arg("clone")
         .arg(url)
+        .current_dir("data/projects/")
         .stdout(Stdio::piped())
         .spawn()
         .expect("'git clone' command failed to start - is git installed?")
@@ -250,15 +300,14 @@ fn get_name_from_url(url: &str) -> Option<String> {
 
 #[post("/webhook", format = "application/json", data = "<webhookdata>")]
 fn github_webhook(webhookdata: Json<WebhookData>, database: State<Database>) -> Status {
-    let name = &webhookdata.repository.name;
-
-    let path = Path::new(name);
+    let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
+    let path = Path::new(&project_path);
     if path.exists() {
         // Pull latest changes!
         let commands = vec!["git pull".to_owned()];
-        run_commands(commands, name);
+        run_commands(commands, &project_path);
 
-        match run_build(name.to_string(), database.inner()) {
+        match run_build(webhookdata.repository.name.clone(), database.inner()) {
             Ok(_) => {
                 return Status::NoContent;
             }
@@ -273,7 +322,7 @@ fn github_webhook(webhookdata: Json<WebhookData>, database: State<Database>) -> 
 
 #[get("/<project>/specific/<file..>")]
 fn project_file(project: String, file: PathBuf) -> Option<NamedFile> {
-    let path = format!("archive/{}/", project);
+    let path = format!("data/archive/{}/", project);
     NamedFile::open(Path::new(&path).join(file)).ok()
 }
 
@@ -349,11 +398,17 @@ fn get_project_status_badge(project: String, database: &Database) -> String {
             status: build_status,
             color: "#4c1".to_owned(),
         };
-    } else {
+    } else if build_status.eq("failing") {
         badge_options = BadgeOptions {
             subject: "drovah".to_owned(),
             status: build_status,
             color: "#ed2e25".to_owned(),
+        };
+    } else {
+        badge_options = BadgeOptions {
+            subject: "drovah".to_owned(),
+            status: "unknown".to_owned(),
+            color: "#A9A9A9".to_owned(),
         };
     }
 
@@ -410,37 +465,28 @@ mod tests {
         let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
 
         let client: rocket::local::Client = Client::new(launch_rocket(drovah_config)).unwrap();
-        let response = client.get("/BiomeChat/statusBadge").dispatch();
+        //let response = client.get("/BiomeChat/statusBadge").dispatch(); // for local testing only
         let fail_response = client.get("/asdasdasdasd/statusBadge").dispatch();
 
-        assert_eq!(response.status(), Status::Ok);
+        //assert_eq!(response.status(), Status::Ok); // for local testing only
         assert_eq!(fail_response.status(), Status::NotFound);
     }
 
     #[test]
-    fn test_autogen_drovah() {
-        let path = Path::new("Drovah.toml");
+    fn test_file_matching() {
+        let file_to_find = ".drovah";
+        let path = match_filename_to_file(file_to_find);
+        assert!(path.is_some());
 
-        let default_file = r#"[mongo]
-mongo_connection_string = "mongodb://localhost:27017"
-mongo_db = "drovah""#;
+        let file_to_find = ".asodmasdasd";
+        let path = match_filename_to_file(file_to_find);
 
-        if path.exists() {
-            fs::remove_file(path).expect("Error removing file");
-        }
+        assert!(path.is_none());
 
-        fs::write(path, default_file).expect("Error creating file");
+        let file_to_find = "./.dro";
+        let path = match_filename_to_file(file_to_find);
 
-        assert!(path.exists());
-
-        let read_from_file = fs::read_to_string(path).expect("Error reading from file");
-        let drovah_config: DrovahConfig =
-            toml::from_str(&read_from_file).expect("Error parsing toml");
-
-        assert_eq!(
-            drovah_config.mongo.mongo_connection_string,
-            "mongodb://localhost:27017"
-        );
-        assert_ne!(drovah_config.mongo.mongo_connection_string, "");
+        assert!(path.is_some());
+        assert_eq!(path.unwrap(), String::from("./.drovah"));
     }
 }

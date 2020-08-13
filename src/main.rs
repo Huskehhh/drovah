@@ -4,6 +4,20 @@ use std::{fs, io, thread};
 
 fn main() {
     let path = Path::new("Drovah.toml");
+    let projects_path = Path::new("data/projects/");
+    let archive_path = Path::new("data/archive/");
+
+    if !projects_path.exists() {
+        if let Err(e) = fs::create_dir_all(projects_path) {
+            eprintln!("Error occurred: {}", e);
+        }
+    }
+
+    if !archive_path.exists() {
+        if let Err(e) = fs::create_dir(archive_path) {
+            eprintln!("Error occurred: {}", e);
+        }
+    }
 
     if !path.exists() {
         let default_file = r#"[mongo]

@@ -12,7 +12,6 @@ Please note that it is still very much WIP!
 Prerequisites:
 - git
 - MongoDB server
-- Linux-like 'cp'
 
 Compile using ``cargo build --release`` 
 and run the built artifact found in ``target/release/``
@@ -88,7 +87,7 @@ Once drovah is running, simply type ``new <url>`` where url is the git url of th
 
 ## Manually managing projects
 
-Just ``git clone <repo>`` in the root folder where drovah is, and then webhooks will be supported instantly
+Just ``git clone <repo>`` in the data/projects/ folder, and then webhooks will be supported instantly
 
 Similarly, just remove the folders you no longer want to track
 
@@ -97,7 +96,7 @@ Similarly, just remove the folders you no longer want to track
 - [ ] More config options to enable/disable stuff
 - [ ] Swap to async mongo + rocket
 - [ ] Cleanup stdout
-- [ ] Logging to file
+- [ ] Build logging to file
 - [ ] Benchmark
 - [ ] Inspect for security
 - [ ] Frontend
