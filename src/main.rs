@@ -1,8 +1,14 @@
-use drovah::{launch_rocket, Config, DrovahConfig};
-use std::path::Path;
-use std::{fs, io, thread};
+extern crate actix_web;
 
-fn main() {
+use std::path::Path;
+use std::{fs, io, env};
+
+use drovah::{launch_webserver};
+
+#[actix_rt::main]
+async fn main() -> io::Result<()> {
+    env::set_var("RUST_LOG", "actix_web=debug,actix_server=info");
+
     let path = Path::new("Drovah.toml");
     let projects_path = Path::new("data/projects/");
     let archive_path = Path::new("data/archive/");
@@ -28,36 +34,9 @@ mongo_db = "drovah""#;
             eprintln!("Error creating default Drovah.toml file! {}", e);
         }
 
-        println!("No 'Drovah.toml' found, so we generated one, please restart the program.");
+        println!("No 'Drovah.toml' found, so we generated a default one!");
     }
 
-    let conf_str = fs::read_to_string(path).unwrap();
-    let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
 
-    // Launch rocket
-    thread::spawn(|| {
-        launch_rocket(drovah_config).launch();
-    });
-
-    // Continually listen for user input
-    loop {
-        let mut input = String::new();
-
-        if let Ok(_) = io::stdin().read_line(&mut input) {
-            thread::spawn(move || {
-                if !input.is_empty() {
-                    let trimmed = input.trim_end().to_string();
-                    let args: Vec<&str> = trimmed.split(" ").collect();
-
-                    if let Ok(config) = Config::new(args) {
-                        if let Err(e) = drovah::run(config) {
-                            eprintln!("Application error: {}", e);
-                        }
-                    }
-                } else {
-                    println!("Please enter an actual input!");
-                }
-            });
-        }
-    }
+    launch_webserver().await
 }

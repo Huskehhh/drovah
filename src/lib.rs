@@ -1,31 +1,19 @@
-#![feature(proc_macro_hygiene, decl_macro)]
+extern crate actix_web;
+extern crate actix_files;
 
 use std::error::Error;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::path::{Path};
+use std::process::{Command, Stdio};
+use std::{fs, io};
 
+use actix_web::web::{Data, Json};
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
-use mongodb::sync::Database;
-use mongodb::{
-    bson::{doc, Bson},
-    sync::Client,
-};
-use rocket::http::{ContentType, Status};
-use rocket::response::NamedFile;
-use rocket::{Response, Rocket, State};
-use rocket_contrib::json::Json;
+use mongodb::{bson::{doc, Bson}, Database, Client};
 use serde::Deserialize;
-use std::io::Cursor;
-
-#[macro_use]
-extern crate rocket;
-
-pub struct Config {
-    command: String,
-    url: Option<String>,
-    project: Option<String>,
-}
+use tokio::stream::StreamExt;
+use actix_files::NamedFile;
+use futures::executor::block_on;
 
 #[derive(Debug, Deserialize)]
 struct WebhookData {
@@ -61,86 +49,16 @@ struct PostArchiveConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct DrovahConfig {
-    mongo: MongoConfig,
+    pub mongo: MongoConfig,
 }
 
 #[derive(Debug, Deserialize)]
-struct MongoConfig {
-    mongo_connection_string: String,
-    mongo_db: String,
+pub struct MongoConfig {
+    pub mongo_connection_string: String,
+    pub mongo_db: String,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct SignedPayload(pub String);
-
-impl Config {
-    pub fn new(args: Vec<&str>) -> Result<Config, &'static str> {
-        if args.len() == 0 {
-            return Err("Not enough arguments!");
-        }
-
-        let command = args[0].to_string();
-
-        return if command.eq_ignore_ascii_case("new") {
-            let url = Some(args[1].to_string());
-
-            Ok(Config {
-                command,
-                url,
-                project: None,
-            })
-        } else if command.eq_ignore_ascii_case("delete")
-            || command.eq_ignore_ascii_case("remove")
-            || command.eq_ignore_ascii_case("build")
-        {
-            let project = Some(args[1].to_string());
-
-            Ok(Config {
-                command,
-                url: None,
-                project,
-            })
-        } else {
-            Err("Incorrect argument!")
-        };
-    }
-}
-
-pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
-    if config.command.eq_ignore_ascii_case("new") {
-        if let Some(url) = config.url {
-            if let Some(name) = get_name_from_url(&url) {
-                let output = clone(url).wait_with_output()?;
-                println!("{:?}", output);
-
-                if output.status.success() {
-                    println!("Added new project '{}'!", name);
-                } else {
-                    println!("Failed to add new project '{}'!", name);
-                }
-            }
-        }
-    } else if config.command.eq_ignore_ascii_case("remove")
-        || config.command.eq_ignore_ascii_case("delete")
-    {
-        if let Some(project) = config.project {
-            let project_path = format!("data/projects/{}", project);
-            let path = Path::new(&project_path);
-
-            if path.exists() && path.is_dir() {
-                if delete(path) {
-                    println!("Success! '{}' has been removed.", project);
-                } else {
-                    println!("'{}' failed to delete.", project);
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>> {
+async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>> {
     println!("Building '{}'", project);
     let project_path = format!("data/projects/{}", project);
     let path = Path::new(&project_path);
@@ -170,10 +88,10 @@ fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>>
                 }
             }
 
-            save_project_build_status(project, "passing".to_owned(), database);
+            save_project_build_status(project, "passing".to_owned(), database).await;
         } else {
             println!("'{}' has failed to build.", project);
-            save_project_build_status(project, "failing".to_owned(), database);
+            save_project_build_status(project, "failing".to_owned(), database).await;
         }
     }
     Ok(())
@@ -270,36 +188,7 @@ fn copy(from_str: &str, to_str: &str) -> bool {
     true
 }
 
-fn clone(url: String) -> Child {
-    Command::new("git")
-        .arg("clone")
-        .arg(url)
-        .current_dir("data/projects/")
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("'git clone' command failed to start - is git installed?")
-}
-
-fn delete(path: &Path) -> bool {
-    if let Err(e) = fs::remove_dir_all(path) {
-        eprintln!("Error deleting path '{}'", e);
-        return false;
-    }
-    true
-}
-
-fn get_name_from_url(url: &str) -> Option<String> {
-    let split = url.split("/");
-
-    if let Some(name) = split.last() {
-        return Some(name.to_string());
-    }
-
-    None
-}
-
-#[post("/webhook", format = "application/json", data = "<webhookdata>")]
-fn github_webhook(webhookdata: Json<WebhookData>, database: State<Database>) -> Status {
+async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>) -> HttpResponse {
     let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
     let path = Path::new(&project_path);
     if path.exists() {
@@ -307,9 +196,9 @@ fn github_webhook(webhookdata: Json<WebhookData>, database: State<Database>) -> 
         let commands = vec!["git pull".to_owned()];
         run_commands(commands, &project_path);
 
-        match run_build(webhookdata.repository.name.clone(), database.inner()) {
+        match run_build(webhookdata.repository.name.clone(), &database).await {
             Ok(_) => {
-                return Status::NoContent;
+                return HttpResponse::NoContent().body("Build complete");
             }
             Err(e) => {
                 eprintln!("Error! {}", e);
@@ -317,60 +206,38 @@ fn github_webhook(webhookdata: Json<WebhookData>, database: State<Database>) -> 
         }
     }
 
-    Status::NotAcceptable
+    HttpResponse::NotAcceptable().body("Project doesn't exist")
 }
 
-#[get("/<project>/specific/<file..>")]
-fn project_file(project: String, file: PathBuf) -> Option<NamedFile> {
-    let path = format!("data/archive/{}/", project);
-    NamedFile::open(Path::new(&path).join(file)).ok()
+async fn get_specific_file(project: web::Path<(String, )>, file: web::Path<(String, )>) -> actix_web::Result<NamedFile> {
+    let path_str = format!("data/archive/{}/", project.into_inner().0);
+    let path = Path::new(&path_str);
+    let file_path = path.join(file.into_inner().0);
+    Ok(NamedFile::open(file_path)?)
 }
 
-#[get("/<project>/latest")]
-fn latest_file(project: String) -> Option<NamedFile> {
-    let str_path = format!("archive/{}/", project);
-    let path = Path::new(&str_path);
-
-    if let Ok(dir) = fs::read_dir(path) {
-        let last = dir.last();
-
-        if let Some(some_last) = last {
-            if let Ok(ok_last) = some_last {
-                return NamedFile::open(ok_last.path()).ok();
-            }
-        }
-    }
-
-    None
-}
-
-#[get("/<project>/badge")]
-fn status_badge(project: String, database: State<Database>) -> Response<'static> {
-    let status_badge = get_project_status_badge(project, database.inner());
+async fn get_status_badge(project: String, database: Data<Database>) -> HttpResponse {
+    let status_badge = get_project_status_badge(project, database.get_ref()).await;
 
     if !status_badge.is_empty() {
-        let response = Response::build()
-            .status(Status::Ok)
-            .header(ContentType::SVG)
-            .sized_body(Cursor::new(status_badge))
-            .finalize();
-
-        return response;
+        return HttpResponse::Ok()
+            .header("Content-Type", "SVG")
+            .body(status_badge);
     }
 
-    Response::build().status(Status::NotFound).finalize()
+    HttpResponse::NotFound().finish()
 }
 
-fn save_project_build_status(project: String, status: String, database: &Database) {
+async fn save_project_build_status(project: String, status: String, database: &Database) {
     let document = doc! { "project": &project, "buildStatus": &status };
 
     let collection = database.collection("build_statuses");
 
-    let build_status = get_project_build_status(&project, &database);
+    let build_status = get_project_build_status(&project, &database).await;
 
     // If it's not already in db - insert, otherwise just update
     if build_status.is_empty() {
-        if let Err(e) = collection.insert_one(document, None) {
+        if let Err(e) = collection.insert_one(document, None).await {
             eprintln!(
                 "Error adding document for project {}, with status of {}, error: {:#?}",
                 project, status, e
@@ -379,7 +246,7 @@ fn save_project_build_status(project: String, status: String, database: &Databas
     } else {
         let filter = doc! { "project": &project };
 
-        if let Err(e) = collection.update_one(filter, document, None) {
+        if let Err(e) = collection.update_one(filter, document, None).await {
             eprintln!(
                 "Error updating document for project {}, with status of {}, error: {:#?}",
                 project, status, e
@@ -388,10 +255,10 @@ fn save_project_build_status(project: String, status: String, database: &Databas
     }
 }
 
-fn get_project_status_badge(project: String, database: &Database) -> String {
+async fn get_project_status_badge(project: String, database: &Database) -> String {
     let badge_options: BadgeOptions;
 
-    let build_status = get_project_build_status(&project, &database);
+    let build_status = get_project_build_status(&project, &database).await;
     if build_status.eq("passing") {
         badge_options = BadgeOptions {
             subject: "drovah".to_owned(),
@@ -420,13 +287,14 @@ fn get_project_status_badge(project: String, database: &Database) -> String {
     "".to_owned()
 }
 
-fn get_project_build_status(project: &String, database: &Database) -> String {
+async fn get_project_build_status(project: &String, database: &Database) -> String {
     let collection = database.collection("build_statuses");
 
-    if let Ok(cursor) = collection.find(doc! { "project": project }, None) {
-        if let Some(doc_result) = cursor.last() {
+    if let Ok(mut cursor) = collection.find(doc! { "project": project }, None).await {
+        if let Some(doc_result) = cursor.next().await {
             if let Ok(document) = doc_result {
                 if let Some(status) = document.get("buildStatus").and_then(Bson::as_str) {
+                    println!("status: {}", status);
                     return status.to_owned();
                 }
             }
@@ -436,41 +304,32 @@ fn get_project_build_status(project: &String, database: &Database) -> String {
     "".to_owned()
 }
 
-pub fn launch_rocket(drovah_config: DrovahConfig) -> Rocket {
-    let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string).unwrap();
-    let database = client.database(&drovah_config.mongo.mongo_db);
+pub async fn launch_webserver() -> io::Result<()> {
+    HttpServer::new(move || {
+        let conf_str = fs::read_to_string(Path::new("Drovah.toml")).unwrap();
+        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
+        let client_future = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string);
+        let client = block_on(client_future).unwrap();
+        let database = client.database(&drovah_config.mongo.mongo_db);
 
-    rocket::ignite().manage(client).manage(database).mount(
-        "/",
-        routes![github_webhook, project_file, latest_file, status_badge],
-    )
+        // Create app
+        App::new()
+            .app_data(database)
+            .wrap(middleware::Logger::default())
+            .service(web::resource("/{project}/badge").route(web::get().to(get_status_badge)))
+            .service(
+                web::resource("/{project}/specific/<file>").route(web::get().to(get_specific_file)),
+            )
+            .service(web::resource("/webhook").route(web::post().to(github_webhook)))
+    })
+        .bind("127.0.0.1:8080")?
+        .run()
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rocket::http::Status;
-    use rocket::local::Client;
-
-    #[test]
-    fn get_name_from_url_test() {
-        let url = "https://github.com/Huskehhh/biomebot-rs";
-        let result = get_name_from_url(url).unwrap();
-        assert_eq!("biomebot-rs", result);
-    }
-
-    #[test]
-    fn test_get_status_badge() {
-        let conf_str = fs::read_to_string(Path::new("Drovah.toml")).unwrap();
-        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-
-        let client: rocket::local::Client = Client::new(launch_rocket(drovah_config)).unwrap();
-        //let response = client.get("/BiomeChat/statusBadge").dispatch(); // for local testing only
-        let fail_response = client.get("/asdasdasdasd/statusBadge").dispatch();
-
-        //assert_eq!(response.status(), Status::Ok); // for local testing only
-        assert_eq!(fail_response.status(), Status::NotFound);
-    }
 
     #[test]
     fn test_file_matching() {
