@@ -1,10 +1,22 @@
 # drovah ![build status](https://ci.husk.pro/drovah/badge)
-Simple, fast, standalone CI written in Rust
+Simple, fast, standalone continuous integration service written in Rust
 
 This project is entirely for fun and building on my rust knowledge,
 however, was created for the purpose of being an ultra lightweight (and fast!) implementation of a continuous integration service.
 
 Please note that it is still very much WIP!
+
+## Current Features
+
+- Simple configuration
+- Supports whatever build tool you want
+- Minimal resource usage
+- Webhook for automated builds
+- Successful build archival
+- Support for post archival actions
+- Latest build retrieval through ``http://host:port/<project>/latest``
+- Specific file retrieval through ``http://host:port/<project>/specific/<filename>``
+- Build status banner retrievable through ``http://host:port/<project>/badge``
  
 ## Setup
 
@@ -17,26 +29,21 @@ Compile using ``cargo build --release``
 and run the built artifact found in ``target/release/``
 
 #### drovah configuration:
-A ``Drovah.toml`` file will be created automatically, and will contain the following:
+A ``drovah.toml`` file will be created automatically, and will contain the following:
 
 ```toml
+[web]
+address = "127.0.0.1:8000"
+
 [mongo]
 mongo_connection_string = "mongodb://localhost:27017"
 mongo_db = "drovah"
 ```
 
-Mongo is used in order to store data related to builds!
+``address`` is used to specify the ip and port to bind the webserver to
 
-#### Webserver configuration:
-
-Optionally you can use a Rocket.toml to [alter the configuration of the web server](https://rocket.rs/v0.4/guide/configuration/#rockettoml)
-
-An example ``Rocket.toml`` file:
-```toml
-[production]
-address = "127.0.0.1"
-port = 8001
-```
+``mongo_connection_string`` is used to specify the connection string for your mongodb server
+``mongo_db`` is used to specify the database to use to store data in
 
 ### In your project
 Simple create a ``.drovah`` file in the root of your project
@@ -61,42 +68,15 @@ commands = ["echo 'woohoo' >> somefile"]
 
 (OPTIONAL) ``postarchive`` must be an array of strings which will represent commands to be run AFTER successful builds, they are run in order.
 
-## Adding tracked projects
-
-Once drovah is running, simply type ``new <url>`` where url is the git url of the project
-
-## Current Features
-
-- Stupid simple configuration
-- Supports whatever build tool you want
-- Absolute minimal resource usage
-- Webhook for automated builds
-- Successful build archival
-- Latest build retrieval through ``http://host:port/<project>/latest``
-- Specific file retrieval through ``http://host:port/<project>/specific/<filename>``
-- Build status banner retrievable through ``http://host:port/<project>/badge``
-
-## Commands
-
-| Command | Description |
-| --------------- | ---------------- |
-| new \<url> | Creates new tracked repo
-| remove \<project name> | Removes tracked project
-
-### Note: if you wish to disable the build status badge, please also remove the data from the Mongo collection manually
-
-## Manually managing projects
+## Managing projects
 
 Just ``git clone <repo>`` in the data/projects/ folder, and then webhooks will be supported instantly
 
 Similarly, just remove the folders you no longer want to track
 
-## Things to come:
-- [ ] Numerous build file(s) archival (at the moment it's only one build)
-- [ ] More config options to enable/disable stuff
-- [ ] Swap to async mongo + rocket
-- [ ] Cleanup stdout
-- [ ] Build logging to file
-- [ ] Benchmark
-- [ ] Inspect for security
-- [ ] Frontend
+### Note if you wish to remove the build status badge when removing a project, you will need to do so manually in the database
+
+## Development
+[You can follow the development of new features here](https://github.com/Huskehhh/drovah/projects/2)
+
+## If you want a feature I don't current have planned, please create an issue

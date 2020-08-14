@@ -1,5 +1,6 @@
 extern crate actix_web;
 extern crate actix_files;
+extern crate env_logger;
 
 use std::error::Error;
 use std::path::{Path};
@@ -14,6 +15,7 @@ use serde::Deserialize;
 use tokio::stream::StreamExt;
 use actix_files::NamedFile;
 use futures::executor::block_on;
+use actix_web::middleware::Logger;
 
 #[derive(Debug, Deserialize)]
 struct WebhookData {
@@ -48,14 +50,20 @@ struct PostArchiveConfig {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct DrovahConfig {
-    pub mongo: MongoConfig,
+struct DrovahConfig {
+    web: WebServerConfig,
+    mongo: MongoConfig
 }
 
 #[derive(Debug, Deserialize)]
-pub struct MongoConfig {
-    pub mongo_connection_string: String,
-    pub mongo_db: String,
+struct MongoConfig {
+    mongo_connection_string: String,
+    mongo_db: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebServerConfig {
+    address: String
 }
 
 async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>> {
@@ -213,15 +221,24 @@ async fn get_specific_file(project: web::Path<(String, )>, file: web::Path<(Stri
     let path_str = format!("data/archive/{}/", project.into_inner().0);
     let path = Path::new(&path_str);
     let file_path = path.join(file.into_inner().0);
-    Ok(NamedFile::open(file_path)?)
+    actix_web::Result::Ok(NamedFile::open(file_path)?)
 }
 
-async fn get_status_badge(project: String, database: Data<Database>) -> HttpResponse {
-    let status_badge = get_project_status_badge(project, database.get_ref()).await;
+async fn get_latest_file(project: web::Path<(String, )>) -> actix_web::Result<NamedFile> {
+    let path_str = format!("data/archive/{}/", project.into_inner().0);
+    let path = Path::new(&path_str);
+
+    let file = NamedFile::open(fs::read_dir(path)?.last().unwrap()?.path())?;
+
+    actix_web::Result::Ok(file)
+}
+
+async fn get_status_badge(project: web::Path<(String, )>, database: Data<Database>) -> HttpResponse {
+    let status_badge = get_project_status_badge(project.into_inner().0, &database).await;
 
     if !status_badge.is_empty() {
         return HttpResponse::Ok()
-            .header("Content-Type", "SVG")
+            .content_type("image/svg+xml")
             .body(status_badge);
     }
 
@@ -291,10 +308,9 @@ async fn get_project_build_status(project: &String, database: &Database) -> Stri
     let collection = database.collection("build_statuses");
 
     if let Ok(mut cursor) = collection.find(doc! { "project": project }, None).await {
-        if let Some(doc_result) = cursor.next().await {
+        while let Some(doc_result) = cursor.next().await {
             if let Ok(document) = doc_result {
                 if let Some(status) = document.get("buildStatus").and_then(Bson::as_str) {
-                    println!("status: {}", status);
                     return status.to_owned();
                 }
             }
@@ -305,8 +321,13 @@ async fn get_project_build_status(project: &String, database: &Database) -> Stri
 }
 
 pub async fn launch_webserver() -> io::Result<()> {
+    std::env::set_var("RUST_LOG", "actix_web=info");
+    env_logger::init();
+
+    let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
+    let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
+
     HttpServer::new(move || {
-        let conf_str = fs::read_to_string(Path::new("Drovah.toml")).unwrap();
         let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
         let client_future = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string);
         let client = block_on(client_future).unwrap();
@@ -314,15 +335,19 @@ pub async fn launch_webserver() -> io::Result<()> {
 
         // Create app
         App::new()
-            .app_data(database)
+            .data(database)
             .wrap(middleware::Logger::default())
             .service(web::resource("/{project}/badge").route(web::get().to(get_status_badge)))
             .service(
                 web::resource("/{project}/specific/<file>").route(web::get().to(get_specific_file)),
             )
+            .service(
+                web::resource("/{project}/latest").route(web::get().to(get_latest_file)),
+            )
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
+            .wrap(Logger::default())
     })
-        .bind("127.0.0.1:8080")?
+        .bind(drovah_config.web.address)?
         .run()
         .await
 }
