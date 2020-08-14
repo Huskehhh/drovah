@@ -3,7 +3,7 @@ extern crate actix_web;
 use std::path::Path;
 use std::{fs, io};
 
-use drovah::{launch_webserver};
+use drovah::launch_webserver;
 
 #[actix_rt::main]
 async fn main() -> io::Result<()> {

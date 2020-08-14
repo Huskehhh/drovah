@@ -1,21 +1,25 @@
-extern crate actix_web;
 extern crate actix_files;
+extern crate actix_web;
 extern crate env_logger;
 
+use serde_json::json;
 use std::error::Error;
-use std::path::{Path};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::{fs, io};
 
+use actix_files::NamedFile;
+use actix_web::middleware::Logger;
 use actix_web::web::{Data, Json};
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
-use mongodb::{bson::{doc, Bson}, Database, Client};
-use serde::Deserialize;
-use tokio::stream::StreamExt;
-use actix_files::NamedFile;
 use futures::executor::block_on;
-use actix_web::middleware::Logger;
+use mongodb::{
+    bson::{doc, Bson},
+    Client, Database,
+};
+use serde::{Deserialize};
+use tokio::stream::StreamExt;
 
 #[derive(Debug, Deserialize)]
 struct WebhookData {
@@ -52,7 +56,7 @@ struct PostArchiveConfig {
 #[derive(Debug, Deserialize)]
 struct DrovahConfig {
     web: WebServerConfig,
-    mongo: MongoConfig
+    mongo: MongoConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +67,7 @@ struct MongoConfig {
 
 #[derive(Debug, Deserialize)]
 struct WebServerConfig {
-    address: String
+    address: String,
 }
 
 async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>> {
@@ -217,14 +221,17 @@ async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>
     HttpResponse::NotAcceptable().body("Project doesn't exist")
 }
 
-async fn get_specific_file(project: web::Path<(String, )>, file: web::Path<(String, )>) -> actix_web::Result<NamedFile> {
+async fn get_specific_file(
+    project: web::Path<(String,)>,
+    file: web::Path<(String,)>,
+) -> actix_web::Result<NamedFile> {
     let path_str = format!("data/archive/{}/", project.into_inner().0);
     let path = Path::new(&path_str);
     let file_path = path.join(file.into_inner().0);
     actix_web::Result::Ok(NamedFile::open(file_path)?)
 }
 
-async fn get_latest_file(project: web::Path<(String, )>) -> actix_web::Result<NamedFile> {
+async fn get_latest_file(project: web::Path<(String,)>) -> actix_web::Result<NamedFile> {
     let path_str = format!("data/archive/{}/", project.into_inner().0);
     let path = Path::new(&path_str);
 
@@ -233,7 +240,26 @@ async fn get_latest_file(project: web::Path<(String, )>) -> actix_web::Result<Na
     actix_web::Result::Ok(file)
 }
 
-async fn get_status_badge(project: web::Path<(String, )>, database: Data<Database>) -> HttpResponse {
+async fn get_project_information() -> actix_web::Result<HttpResponse> {
+    let dir = Path::new("data/projects/");
+
+    let mut projects = vec![];
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if let Ok(file_name) = entry.file_name().into_string() {
+                projects.push(file_name);
+            }
+        }
+    }
+
+    let json_result = json!({ "projects": projects });
+
+    actix_web::Result::Ok(HttpResponse::Ok().json(json_result))
+}
+
+async fn get_status_badge(project: web::Path<(String,)>, database: Data<Database>) -> HttpResponse {
     let status_badge = get_project_status_badge(project.into_inner().0, &database).await;
 
     if !status_badge.is_empty() {
@@ -341,15 +367,18 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(
                 web::resource("/{project}/specific/<file>").route(web::get().to(get_specific_file)),
             )
+            .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
             .service(
-                web::resource("/{project}/latest").route(web::get().to(get_latest_file)),
+                web::resource("/api/projects")
+                    .route(web::get().to(get_project_information)),
             )
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
+            .service(actix_files::Files::new("/", "static").show_files_listing())
             .wrap(Logger::default())
     })
-        .bind(drovah_config.web.address)?
-        .run()
-        .await
+    .bind(drovah_config.web.address)?
+    .run()
+    .await
 }
 
 #[cfg(test)]
