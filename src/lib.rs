@@ -18,7 +18,7 @@ use mongodb::{
     bson::{doc, Bson},
     Client, Database,
 };
-use serde::{Deserialize};
+use serde::Deserialize;
 use tokio::stream::StreamExt;
 
 #[derive(Debug, Deserialize)]
@@ -368,10 +368,7 @@ pub async fn launch_webserver() -> io::Result<()> {
                 web::resource("/{project}/specific/<file>").route(web::get().to(get_specific_file)),
             )
             .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
-            .service(
-                web::resource("/api/projects")
-                    .route(web::get().to(get_project_information)),
-            )
+            .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
             .service(actix_files::Files::new("/", "static").show_files_listing())
             .wrap(Logger::default())
