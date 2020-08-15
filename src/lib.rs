@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 use std::{fs, io};
 
 use actix_files::NamedFile;
+use actix_web::http::StatusCode;
 use actix_web::middleware::Logger;
 use actix_web::web::{Data, Json};
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
@@ -271,6 +272,12 @@ async fn get_status_badge(project: web::Path<(String,)>, database: Data<Database
     HttpResponse::NotFound().finish()
 }
 
+async fn index() -> actix_web::Result<HttpResponse> {
+    Ok(HttpResponse::build(StatusCode::OK)
+        .content_type("text/html; charset=utf-8")
+        .body(include_str!("../static/index.html")))
+}
+
 async fn save_project_build_status(project: String, status: String, database: &Database) {
     let document = doc! { "project": &project, "buildStatus": &status };
 
@@ -370,6 +377,7 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
             .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
+            .service(web::resource("/").route(web::get().to(index)))
             .service(actix_files::Files::new("/", "static").show_files_listing())
             .wrap(Logger::default())
     })

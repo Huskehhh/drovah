@@ -26,7 +26,8 @@
             <div class="col-lg-8 align-self-baseline">
                 <div class="row" v-if="!loading">
                     <project v-for="project in projects" v-bind:key="project" v-bind:project-name="project"
-                             v-bind:build-status="badgeUrlForProject(project)"></project>
+                             v-bind:build-status="badgeUrlForProject(project)"
+                             v-bind:latest-build="latestBuildForProject(project)"></project>
                 </div>
             </div>
         </div>
@@ -35,8 +36,9 @@
 
 <footer class="bg-light py-5">
     <div class="container">
-        <div class="small text-center text-muted">Service by <a href="https://github.com/Huskehhh/drovah/">Drovah</a> -
-            Written by <a href="https://github.com/Huskehhh/">husK</a></div>
+        <div class="small text-center text-muted"><a href="https://github.com/Huskehhh/drovah/">Drovah</a> - A
+            continuous integration service in Rust!
+        </div>
     </div>
 </footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
