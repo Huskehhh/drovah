@@ -10,9 +10,10 @@ Please note that it is still very much WIP!
 
 - Simple configuration
 - Supports whatever build tool you want
+- Simple frontend (purely for latest file retrieval + build status. More coming soon)
 - Minimal resource usage
 - Webhook for automated builds
-- Successful build archival
+- Successful build archival (numerous builds)
 - Support for post archival actions
 - Latest build retrieval through ``http://host:port/<project>/latest``
 - Specific file retrieval through ``http://host:port/<project>/specific/<filename>``
