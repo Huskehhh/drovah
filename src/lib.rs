@@ -19,7 +19,7 @@ use mongodb::{
     bson::{doc, Bson},
     Client, Database,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::stream::StreamExt;
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +30,19 @@ struct WebhookData {
 #[derive(Debug, Deserialize)]
 struct RepositoryData {
     name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProjectData {
+    project: String,
+    builds: Vec<BuildData>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildData {
+    build_number: i32,
+    build_status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,7 +99,7 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
             println!("Success! '{}' has been built.", project);
 
             if let Some(files) = ci_config.archive {
-                if archive_files(files.files, &project) {
+                if archive_files(files.files, &project, database).await {
                     println!("Successfully archived files for '{}'", project);
 
                     if let Some(post_archive) = ci_config.postarchive {
@@ -101,10 +114,10 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
                 }
             }
 
-            save_project_build_status(project, "passing".to_owned(), database).await;
+            save_project_build_data(project, "passing".to_owned(), database).await;
         } else {
             println!("'{}' has failed to build.", project);
-            save_project_build_status(project, "failing".to_owned(), database).await;
+            save_project_build_data(project, "failing".to_owned(), database).await;
         }
     }
     Ok(())
@@ -133,7 +146,7 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
     false
 }
 
-fn archive_files(files_to_archive: Vec<String>, project: &str) -> bool {
+async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &Database) -> bool {
     let archive_folder = format!("data/archive/{}/", project);
     let archive_path = Path::new(&archive_folder);
     if !archive_path.exists() {
@@ -142,16 +155,28 @@ fn archive_files(files_to_archive: Vec<String>, project: &str) -> bool {
         }
     }
 
+    let build_number = get_current_build_number(project, database).await + 1;
+
     for file_to_match in files_to_archive {
         let path_to_search = format!("data/projects/{}/{}", project, file_to_match);
         if let Some(matched) = match_filename_to_file(&path_to_search) {
             let matched_file_name = matched.split("/").last().unwrap();
-            let to = format!("data/archive/{}/{}", project, matched_file_name);
+            let to = format!(
+                "data/archive/{}/{}/{}",
+                project, build_number, matched_file_name
+            );
             return copy(&matched, &to);
         }
     }
 
     false
+}
+
+async fn get_current_build_number(project: &str, database: &Database) -> i32 {
+    if let Some(project_data) = get_project_data(project, database).await {
+        return project_data.builds.len() as i32;
+    }
+    1
 }
 
 fn match_filename_to_file(filename: &str) -> Option<String> {
@@ -191,6 +216,11 @@ fn copy(from_str: &str, to_str: &str) -> bool {
     let from = Path::new(from_str);
     let to = Path::new(to_str);
 
+    if let Err(e) = fs::create_dir_all(to.parent().unwrap()) {
+        eprintln!("Error creating directory pre-copy {}", e);
+        return false;
+    }
+
     println!("Copying {} -> {}", from_str, to_str);
 
     if let Err(e) = fs::copy(from, to) {
@@ -211,7 +241,7 @@ async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>
 
         match run_build(webhookdata.repository.name.clone(), &database).await {
             Ok(_) => {
-                return HttpResponse::NoContent().body("Build complete");
+                return HttpResponse::NoContent().finish();
             }
             Err(e) => {
                 eprintln!("Error! {}", e);
@@ -222,18 +252,15 @@ async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>
     HttpResponse::NotAcceptable().body("Project doesn't exist")
 }
 
-async fn get_specific_file(
+async fn get_latest_file(
     project: web::Path<(String,)>,
-    file: web::Path<(String,)>,
+    database: Data<Database>,
 ) -> actix_web::Result<NamedFile> {
-    let path_str = format!("data/archive/{}/", project.into_inner().0);
-    let path = Path::new(&path_str);
-    let file_path = path.join(file.into_inner().0);
-    actix_web::Result::Ok(NamedFile::open(file_path)?)
-}
+    let project = project.into_inner().0;
 
-async fn get_latest_file(project: web::Path<(String,)>) -> actix_web::Result<NamedFile> {
-    let path_str = format!("data/archive/{}/", project.into_inner().0);
+    let build_number = get_current_build_number(&project, &database).await;
+
+    let path_str = format!("data/archive/{}/{}/", &project, build_number);
     let path = Path::new(&path_str);
 
     let file = NamedFile::open(fs::read_dir(path)?.last().unwrap()?.path())?;
@@ -278,50 +305,91 @@ async fn index() -> actix_web::Result<HttpResponse> {
         .body(include_str!("../static/index.html")))
 }
 
-async fn save_project_build_status(project: String, status: String, database: &Database) {
-    let document = doc! { "project": &project, "buildStatus": &status };
+async fn get_project_data(project: &str, database: &Database) -> Option<ProjectData> {
+    let collection = database.collection("project_data");
 
-    let collection = database.collection("build_statuses");
+    let document = doc! { "project": &project };
 
-    let build_status = get_project_build_status(&project, &database).await;
-
-    // If it's not already in db - insert, otherwise just update
-    if build_status.is_empty() {
-        if let Err(e) = collection.insert_one(document, None).await {
-            eprintln!(
-                "Error adding document for project {}, with status of {}, error: {:#?}",
-                project, status, e
-            );
+    if let Ok(mut cursor) = collection.find(document, None).await {
+        while let Some(doc_result) = cursor.next().await {
+            if let Ok(document) = doc_result {
+                let project_data: ProjectData = bson::from_bson(Bson::Document(document)).unwrap();
+                return Some(project_data);
+            }
         }
-    } else {
+    }
+    None
+}
+
+async fn save_project_build_data(project: String, status: String, database: &Database) {
+    let collection = database.collection("project_data");
+    let project_data = get_project_data(&project, database).await;
+
+    // Currently has data, lets replace rather than add new
+    if project_data.is_some() {
+        let mut project_data = project_data.unwrap();
+
+        let build_data = BuildData {
+            build_number: project_data.builds.len() as i32 + 1,
+            build_status: status,
+        };
+
+        // Add this build to the list
+        project_data.builds.push(build_data);
+
+        let serialised = bson::to_bson(&project_data).unwrap();
+        let document = serialised.as_document().unwrap().clone();
+
         let filter = doc! { "project": &project };
 
         if let Err(e) = collection.update_one(filter, document, None).await {
             eprintln!(
-                "Error updating document for project {}, with status of {}, error: {:#?}",
-                project, status, e
+                "Error updating document for project {}, error: {:#?}",
+                project, e
+            );
+        }
+    } else {
+        let build_data = BuildData {
+            build_number: 1,
+            build_status: status,
+        };
+        let project_data: ProjectData = ProjectData {
+            project,
+            builds: vec![build_data],
+        };
+
+        let serialised = bson::to_bson(&project_data).unwrap();
+        let document = serialised.as_document().unwrap().clone();
+
+        if let Err(e) = collection.insert_one(document, None).await {
+            eprintln!(
+                "Error adding document for project {}, error: {:#?}",
+                project_data.project, e
             );
         }
     }
 }
 
 async fn get_project_status_badge(project: String, database: &Database) -> String {
-    let badge_options: BadgeOptions;
+    let build_status = get_latest_build_status(&project, &database).await;
 
-    let build_status = get_project_build_status(&project, &database).await;
-    if build_status.eq("passing") {
-        badge_options = BadgeOptions {
-            subject: "drovah".to_owned(),
-            status: build_status,
-            color: "#4c1".to_owned(),
-        };
-    } else if build_status.eq("failing") {
-        badge_options = BadgeOptions {
-            subject: "drovah".to_owned(),
-            status: build_status,
-            color: "#ed2e25".to_owned(),
-        };
-    } else {
+    let mut badge_options: BadgeOptions = Default::default();
+
+    if let Some(status) = build_status {
+        if status.eq("passing") {
+            badge_options = BadgeOptions {
+                subject: "drovah".to_owned(),
+                status,
+                color: "#4c1".to_owned(),
+            };
+        } else if status.eq("failing") {
+            badge_options = BadgeOptions {
+                subject: "drovah".to_owned(),
+                status,
+                color: "#ed2e25".to_owned(),
+            };
+        }
+    } else if let None = build_status {
         badge_options = BadgeOptions {
             subject: "drovah".to_owned(),
             status: "unknown".to_owned(),
@@ -337,20 +405,28 @@ async fn get_project_status_badge(project: String, database: &Database) -> Strin
     "".to_owned()
 }
 
-async fn get_project_build_status(project: &String, database: &Database) -> String {
-    let collection = database.collection("build_statuses");
+async fn get_latest_build_status(project: &str, database: &Database) -> Option<String> {
+    let collection = database.collection("project_data");
 
-    if let Ok(mut cursor) = collection.find(doc! { "project": project }, None).await {
+    let document = doc! { "project": & project };
+
+    if let Ok(mut cursor) = collection.find(document, None).await {
         while let Some(doc_result) = cursor.next().await {
             if let Ok(document) = doc_result {
-                if let Some(status) = document.get("buildStatus").and_then(Bson::as_str) {
-                    return status.to_owned();
+                if let Some(builds) = document.get("builds").and_then(Bson::as_array) {
+                    if let Some(last) = builds.last().and_then(Bson::as_document) {
+                        if let Some(latest_build_status) =
+                            last.get("buildStatus").and_then(Bson::as_str)
+                        {
+                            return Some(String::from(latest_build_status));
+                        }
+                    }
                 }
             }
         }
     }
 
-    "".to_owned()
+    None
 }
 
 pub async fn launch_webserver() -> io::Result<()> {
@@ -371,9 +447,6 @@ pub async fn launch_webserver() -> io::Result<()> {
             .data(database)
             .wrap(middleware::Logger::default())
             .service(web::resource("/{project}/badge").route(web::get().to(get_status_badge)))
-            .service(
-                web::resource("/{project}/specific/<file>").route(web::get().to(get_specific_file)),
-            )
             .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
             .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
@@ -406,5 +479,53 @@ mod tests {
 
         assert!(path.is_some());
         assert_eq!(path.unwrap(), String::from("./.drovah"));
+    }
+
+    #[tokio::test]
+    async fn test_get_next_build_number() {
+        let project = "BiomeChat";
+
+        let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
+        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
+        let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string)
+            .await
+            .unwrap();
+        let database = client.database(&drovah_config.mongo.mongo_db);
+
+        let current_b_num = get_current_build_number(project, &database).await;
+
+        let wrong_b_num = get_current_build_number("SomethingWrong", &database).await;
+
+        assert_eq!(current_b_num, 3);
+        assert_eq!(wrong_b_num, 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_project_data() {
+        let project = "BiomeChat";
+
+        let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
+        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
+        let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string)
+            .await
+            .unwrap();
+        let database = client.database(&drovah_config.mongo.mongo_db);
+
+        let project_data = get_project_data(project, &database).await;
+
+        assert!(project_data.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_store_project_data() {
+        let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
+        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
+        let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string)
+            .await
+            .unwrap();
+        let database = client.database(&drovah_config.mongo.mongo_db);
+
+        save_project_build_data("BiomeChat".to_owned(), "passing".to_owned(), &database).await;
+        save_project_build_data("drovah".to_owned(), "passing".to_owned(), &database).await;
     }
 }
