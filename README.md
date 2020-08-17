@@ -92,7 +92,9 @@ Similarly, just remove the folders you no longer want to track
 
 The webhook by default is available at http://localhost:8000/webhook
 
-Example payload
+This webhook supports GitHub, and can be set up using the ``application/json`` payload.
+
+If you want to build from some other source, here's an example payload
 ```json
 {
     "repository": {
