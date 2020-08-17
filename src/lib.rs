@@ -45,6 +45,13 @@ struct BuildData {
     build_status: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectInformation {
+    project: String,
+    has_file: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct CIConfig {
     build: BuildConfig,
@@ -252,12 +259,15 @@ async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>
     HttpResponse::NotAcceptable().body("Project doesn't exist")
 }
 
-async fn get_latest_file(
-    project: web::Path<(String,)>,
+async fn api_get_latest_file(
+    project: web::Path<(String, )>,
     database: Data<Database>,
 ) -> actix_web::Result<NamedFile> {
     let project = project.into_inner().0;
+    get_latest_file(&project, &database).await
+}
 
+async fn get_latest_file(project: &str, database: &Database) -> actix_web::Result<NamedFile> {
     let build_number = get_current_build_number(&project, &database).await;
 
     let path_str = format!("data/archive/{}/{}/", &project, build_number);
@@ -268,7 +278,7 @@ async fn get_latest_file(
     actix_web::Result::Ok(file)
 }
 
-async fn get_project_information() -> actix_web::Result<HttpResponse> {
+async fn get_project_information(database: Data<Database>) -> actix_web::Result<HttpResponse> {
     let dir = Path::new("data/projects/");
 
     let mut projects = vec![];
@@ -277,7 +287,13 @@ async fn get_project_information() -> actix_web::Result<HttpResponse> {
         let path = entry.path();
         if path.is_dir() {
             if let Ok(file_name) = entry.file_name().into_string() {
-                projects.push(file_name);
+                let has_file = get_latest_file(&file_name, &database).await.is_ok();
+                let project_information = ProjectInformation {
+                    project: file_name,
+                    has_file
+                };
+
+                projects.push(project_information);
             }
         }
     }
@@ -287,7 +303,7 @@ async fn get_project_information() -> actix_web::Result<HttpResponse> {
     actix_web::Result::Ok(HttpResponse::Ok().json(json_result))
 }
 
-async fn get_status_badge(project: web::Path<(String,)>, database: Data<Database>) -> HttpResponse {
+async fn get_status_badge(project: web::Path<(String, )>, database: Data<Database>) -> HttpResponse {
     let status_badge = get_project_status_badge(project.into_inner().0, &database).await;
 
     if !status_badge.is_empty() {
@@ -416,7 +432,7 @@ async fn get_latest_build_status(project: &str, database: &Database) -> Option<S
                 if let Some(builds) = document.get("builds").and_then(Bson::as_array) {
                     if let Some(last) = builds.last().and_then(Bson::as_document) {
                         if let Some(latest_build_status) =
-                            last.get("buildStatus").and_then(Bson::as_str)
+                        last.get("buildStatus").and_then(Bson::as_str)
                         {
                             return Some(String::from(latest_build_status));
                         }
@@ -447,7 +463,7 @@ pub async fn launch_webserver() -> io::Result<()> {
             .data(database)
             .wrap(middleware::Logger::default())
             .service(web::resource("/{project}/badge").route(web::get().to(get_status_badge)))
-            .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
+            .service(web::resource("/{project}/latest").route(web::get().to(api_get_latest_file)))
             .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
             .service(web::resource("/").route(web::get().to(index)))
@@ -455,9 +471,9 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(actix_files::Files::new("/data", "data/archive").show_files_listing())
             .wrap(Logger::default())
     })
-    .bind(drovah_config.web.address)?
-    .run()
-    .await
+        .bind(drovah_config.web.address)?
+        .run()
+        .await
 }
 
 #[cfg(test)]
@@ -470,7 +486,7 @@ mod tests {
         let path = match_filename_to_file(file_to_find);
         assert!(path.is_some());
 
-        let file_to_find = ".asodmasdasd";
+        let file_to_find = ".doesnt exist";
         let path = match_filename_to_file(file_to_find);
 
         assert!(path.is_none());

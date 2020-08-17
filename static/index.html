@@ -25,13 +25,13 @@
             </div>
             <div class="col-lg-8 align-self-baseline">
                 <div class="row" v-if="!loading">
-                    <project v-for="project in projects" v-bind:key="project" v-bind:project-name="project"
-                             v-bind:build-status="badgeUrlForProject(project)"
-                             v-bind:latest-build="latestBuildForProject(project)"></project>
+                    <project v-for="project in projects" v-bind:key="project.project" v-bind:project-name="project.project"
+                             v-bind:build-status="badgeUrlForProject(project.project)"
+                             v-bind:latest-build="latestBuildForProject(project.project)" v-bind:has-files="project.hasFile"></project>
                 </div>
             </div>
             <p><a href="https://github.com/Huskehhh/drovah/">Drovah</a> - A
-                continuous integration service in Rust!</p>
+                continuous integration service written in Rust!</p>
         </div>
     </div>
 </header>
