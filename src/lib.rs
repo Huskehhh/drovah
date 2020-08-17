@@ -452,6 +452,7 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
             .service(web::resource("/").route(web::get().to(index)))
             .service(actix_files::Files::new("/", "static").show_files_listing())
+            .service(actix_files::Files::new("/data", "data/archive").show_files_listing())
             .wrap(Logger::default())
     })
     .bind(drovah_config.web.address)?
@@ -479,53 +480,5 @@ mod tests {
 
         assert!(path.is_some());
         assert_eq!(path.unwrap(), String::from("./.drovah"));
-    }
-
-    #[tokio::test]
-    async fn test_get_next_build_number() {
-        let project = "BiomeChat";
-
-        let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
-        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-        let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string)
-            .await
-            .unwrap();
-        let database = client.database(&drovah_config.mongo.mongo_db);
-
-        let current_b_num = get_current_build_number(project, &database).await;
-
-        let wrong_b_num = get_current_build_number("SomethingWrong", &database).await;
-
-        assert_eq!(current_b_num, 3);
-        assert_eq!(wrong_b_num, 1);
-    }
-
-    #[tokio::test]
-    async fn test_get_project_data() {
-        let project = "BiomeChat";
-
-        let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
-        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-        let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string)
-            .await
-            .unwrap();
-        let database = client.database(&drovah_config.mongo.mongo_db);
-
-        let project_data = get_project_data(project, &database).await;
-
-        assert!(project_data.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_store_project_data() {
-        let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
-        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-        let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string)
-            .await
-            .unwrap();
-        let database = client.database(&drovah_config.mongo.mongo_db);
-
-        save_project_build_data("BiomeChat".to_owned(), "passing".to_owned(), &database).await;
-        save_project_build_data("drovah".to_owned(), "passing".to_owned(), &database).await;
     }
 }
