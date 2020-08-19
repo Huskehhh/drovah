@@ -2,20 +2,20 @@ extern crate actix_files;
 extern crate actix_web;
 extern crate env_logger;
 
-use std::{fs, io};
 use std::error::Error;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::{fs, io};
 
 use actix_files::NamedFile;
-use actix_web::{App, HttpResponse, HttpServer, middleware, web};
 use actix_web::http::StatusCode;
 use actix_web::middleware::Logger;
 use actix_web::web::{Data, Json};
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
 use futures::executor::block_on;
 use mongodb::{
-    bson::{Bson, doc},
+    bson::{doc, Bson},
     Client, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -242,7 +242,6 @@ async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>
     let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
     let path = Path::new(&project_path);
     if path.exists() {
-
         tokio::spawn(async move {
             let commands = vec!["git pull".to_owned()];
             run_commands(commands, &project_path);
@@ -259,7 +258,7 @@ async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>
 }
 
 async fn api_get_latest_file(
-    project: web::Path<(String, )>,
+    project: web::Path<(String,)>,
     database: Data<Database>,
 ) -> actix_web::Result<NamedFile> {
     let project = project.into_inner().0;
@@ -302,7 +301,7 @@ async fn get_project_information(database: Data<Database>) -> actix_web::Result<
     actix_web::Result::Ok(HttpResponse::Ok().json(json_result))
 }
 
-async fn get_status_badge(project: web::Path<(String, )>, database: Data<Database>) -> HttpResponse {
+async fn get_status_badge(project: web::Path<(String,)>, database: Data<Database>) -> HttpResponse {
     let status_badge = get_project_status_badge(project.into_inner().0, &database).await;
 
     if !status_badge.is_empty() {
@@ -431,7 +430,7 @@ async fn get_latest_build_status(project: &str, database: &Database) -> Option<S
                 if let Some(builds) = document.get("builds").and_then(Bson::as_array) {
                     if let Some(last) = builds.last().and_then(Bson::as_document) {
                         if let Some(latest_build_status) =
-                        last.get("buildStatus").and_then(Bson::as_str)
+                            last.get("buildStatus").and_then(Bson::as_str)
                         {
                             return Some(String::from(latest_build_status));
                         }
@@ -470,9 +469,9 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(actix_files::Files::new("/data", "data/archive").show_files_listing())
             .wrap(Logger::default())
     })
-        .bind(drovah_config.web.address)?
-        .run()
-        .await
+    .bind(drovah_config.web.address)?
+    .run()
+    .await
 }
 
 #[cfg(test)]
