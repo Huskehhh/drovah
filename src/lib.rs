@@ -466,7 +466,6 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
             .service(web::resource("/").route(web::get().to(index)))
             .service(actix_files::Files::new("/", "static").show_files_listing())
-            .service(actix_files::Files::new("/data", "data/archive").show_files_listing())
             .wrap(Logger::default())
     })
     .bind(drovah_config.web.address)?
