@@ -2,24 +2,24 @@ extern crate actix_files;
 extern crate actix_web;
 extern crate env_logger;
 
-use serde_json::json;
+use std::{fs, io};
 use std::error::Error;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::{fs, io};
 
 use actix_files::NamedFile;
+use actix_web::{App, HttpResponse, HttpServer, middleware, web};
 use actix_web::http::StatusCode;
 use actix_web::middleware::Logger;
 use actix_web::web::{Data, Json};
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
 use futures::executor::block_on;
 use mongodb::{
-    bson::{doc, Bson},
+    bson::{Bson, doc},
     Client, Database,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::stream::StreamExt;
 
 #[derive(Debug, Deserialize)]
@@ -242,18 +242,17 @@ async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>
     let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
     let path = Path::new(&project_path);
     if path.exists() {
-        // Pull latest changes!
-        let commands = vec!["git pull".to_owned()];
-        run_commands(commands, &project_path);
 
-        match run_build(webhookdata.repository.name.clone(), &database).await {
-            Ok(_) => {
-                return HttpResponse::NoContent().finish();
-            }
-            Err(e) => {
+        tokio::spawn(async move {
+            let commands = vec!["git pull".to_owned()];
+            run_commands(commands, &project_path);
+
+            if let Err(e) = run_build(webhookdata.repository.name.clone(), &database).await {
                 eprintln!("Error! {}", e);
             }
-        }
+        });
+
+        return HttpResponse::NoContent().finish();
     }
 
     HttpResponse::NotAcceptable().body("Project doesn't exist")
@@ -290,7 +289,7 @@ async fn get_project_information(database: Data<Database>) -> actix_web::Result<
                 let has_file = get_latest_file(&file_name, &database).await.is_ok();
                 let project_information = ProjectInformation {
                     project: file_name,
-                    has_file
+                    has_file,
                 };
 
                 projects.push(project_information);
