@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"/>
-    <meta name="description" content="drovah"/>
-    <meta name="author" content="Huskehhh"/>
+    <meta content="width=device-width, initial-scale=1, shrink-to-fit=no" name="viewport"/>
+    <meta content="drovah" name="description"/>
+    <meta content="Huskehhh" name="author"/>
     <title>Drovah</title>
-    <link rel="icon" type="image/x-icon" href="assets/img/favicon.ico"/>
+    <link href="assets/img/favicon.ico" rel="icon" type="image/x-icon"/>
     <script src="js/font-awesome-all.js"></script>
     <link href="https://fonts.googleapis.com/css?family=Merriweather+Sans:400,700" rel="stylesheet"/>
     <link href="https://fonts.googleapis.com/css?family=Merriweather:400,300,300italic,400italic,700,700italic"
@@ -25,12 +25,14 @@
             </div>
             <div class="col-lg-8 align-self-baseline">
                 <div class="row" v-if="!loading">
-                    <project v-for="project in projects" v-bind:key="project.project" v-bind:project-name="project.project"
-                             v-bind:build-status="badgeUrlForProject(project.project)"
-                             v-bind:latest-build="latestBuildForProject(project.project)" v-bind:has-files="project.hasFile"></project>
+                    <project v-bind:build-status="badgeUrlForProject(project.project)" v-bind:has-files="project.hasFile"
+                             v-bind:key="project.project"
+                             v-bind:latest-build="latestBuildForProject(project.project)"
+                             v-bind:project-name="project.project"
+                             v-for="project in projects"></project>
                 </div>
             </div>
-            <p><a href="https://github.com/Huskehhh/drovah/">Drovah</a> - A
+            <p><a href="https://github.com/Huskehhh/drovah/">drovah</a> - A
                 continuous integration service written in Rust!</p>
         </div>
     </div>

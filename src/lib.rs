@@ -238,7 +238,10 @@ fn copy(from_str: &str, to_str: &str) -> bool {
     true
 }
 
-async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>) -> HttpResponse {
+async fn github_webhook(
+    webhookdata: Json<WebhookData>,
+    database: Data<Database>,
+) -> actix_web::Result<HttpResponse> {
     let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
     let path = Path::new(&project_path);
     if path.exists() {
@@ -251,10 +254,10 @@ async fn github_webhook(webhookdata: Json<WebhookData>, database: Data<Database>
             }
         });
 
-        return HttpResponse::NoContent().finish();
+        return actix_web::Result::Ok(HttpResponse::NoContent().finish());
     }
 
-    HttpResponse::NotAcceptable().body("Project doesn't exist")
+    actix_web::Result::Ok(HttpResponse::NotAcceptable().body("Project doesn't exist"))
 }
 
 async fn api_get_latest_file(
