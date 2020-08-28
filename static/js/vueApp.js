@@ -5,8 +5,14 @@ Vue.component('project', {
     },
     methods: {
         hasLatest: function () {
-            if (this.builds == null) return false;
-            if (this.builds.length === 1) return true;
+            let result = false;
+            for (let i = 0; i < this.builds.length; i++) {
+                let obj = this.builds[i];
+                if (obj.archivedFiles != null) {
+                    result = true;
+                }
+            }
+            return result;
         },
         badgeUrl: function () {
             return "/" + this.projectName + "/badge";
