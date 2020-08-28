@@ -5,7 +5,8 @@ Vue.component('project', {
     },
     methods: {
         hasLatest: function () {
-            return this.builds.length === 1;
+            if (this.builds == null) return false;
+            if (this.builds.length === 1) return true;
         },
         badgeUrl: function () {
             return "/" + this.projectName + "/badge";
