@@ -5,15 +5,12 @@ Vue.component('project', {
     },
     methods: {
         hasLatest: function () {
-            console.log("Called latest for " + this.projectName);
             return this.builds.length === 1;
         },
         badgeUrl: function () {
-            console.log("Called badge");
             return "/" + this.projectName + "/badge";
         },
         latestBuild: function () {
-            console.log("Called latest");
             return "/" + this.projectName + "/latest";
         }
     },
