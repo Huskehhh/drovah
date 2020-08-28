@@ -5,7 +5,7 @@
     <meta content="width=device-width, initial-scale=1, shrink-to-fit=no" name="viewport"/>
     <meta content="drovah" name="description"/>
     <meta content="Huskehhh" name="author"/>
-    <title>Drovah</title>
+    <title>drovah</title>
     <link href="assets/img/favicon.ico" rel="icon" type="image/x-icon"/>
     <script src="js/font-awesome-all.js"></script>
     <link href="https://fonts.googleapis.com/css?family=Merriweather+Sans:400,700" rel="stylesheet"/>
@@ -25,9 +25,7 @@
             </div>
             <div class="col-lg-8 align-self-baseline">
                 <div class="row" v-if="!loading">
-                    <project v-bind:build-status="badgeUrlForProject(project.project)" v-bind:has-files="project.hasFile"
-                             v-bind:key="project.project"
-                             v-bind:latest-build="latestBuildForProject(project.project)"
+                    <project v-bind:builds="project.builds"
                              v-bind:project-name="project.project"
                              v-for="project in projects"></project>
                 </div>

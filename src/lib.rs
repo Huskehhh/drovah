@@ -2,20 +2,20 @@ extern crate actix_files;
 extern crate actix_web;
 extern crate env_logger;
 
-use std::{fs, io};
 use std::error::Error;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::{fs, io};
 
 use actix_files::NamedFile;
-use actix_web::{App, HttpResponse, HttpServer, middleware, web};
 use actix_web::http::StatusCode;
 use actix_web::middleware::Logger;
 use actix_web::web::{Data, Json};
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
 use futures::executor::block_on;
 use mongodb::{
-    bson::{Bson, doc},
+    bson::{doc, Bson},
     Client, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -43,14 +43,7 @@ struct ProjectData {
 struct BuildData {
     build_number: i32,
     build_status: String,
-    archived_files: Option<Vec<String>>
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectInformation {
-    project: String,
-    has_file: bool,
+    archived_files: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,7 +107,10 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
                         if run_commands(post_archive.commands, &project_path) {
                             println!("Successfully ran post-archive commands for '{}'", project);
                         } else {
-                            println!("Error occurred running post-archive commands for '{}'", project);
+                            println!(
+                                "Error occurred running post-archive commands for '{}'",
+                                project
+                            );
                         }
                     }
                 } else {
@@ -169,6 +165,9 @@ async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &
 
     let build_number = get_current_build_number(project, database).await + 1;
 
+    let mut success = false;
+    let mut filenames = vec![];
+
     for file_to_match in files_to_archive {
         let path_to_search = format!("data/projects/{}/{}", project, file_to_match);
         if let Some(matched) = match_filename_to_file(&path_to_search) {
@@ -177,11 +176,24 @@ async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &
                 "data/archive/{}/{}/{}",
                 project, build_number, matched_file_name
             );
-            return copy(&matched, &to);
+            if copy(&matched, &to) {
+                filenames.push(matched_file_name.to_owned());
+                success = true;
+            }
         }
     }
 
-    false
+    if success {
+        save_project_build_data(
+            project.to_owned(),
+            "passing".to_owned(),
+            database,
+            Some(filenames),
+        )
+        .await;
+    }
+
+    success
 }
 
 async fn get_current_build_number(project: &str, database: &Database) -> i32 {
@@ -266,11 +278,26 @@ async fn github_webhook(
 }
 
 async fn api_get_latest_file(
-    project: web::Path<(String, )>,
+    project: web::Path<(String,)>,
     database: Data<Database>,
 ) -> actix_web::Result<NamedFile> {
     let project = project.into_inner().0;
     get_latest_file(&project, &database).await
+}
+
+async fn get_file_for_build(
+    path: web::Path<(String, String, String)>,
+) -> actix_web::Result<NamedFile> {
+    let inner = path.into_inner();
+    let project = inner.0;
+    let build = inner.1;
+    let file = inner.2;
+
+    let formatted = format!("data/archive/{}/{}/{}", project, build, file);
+
+    let p = Path::new(&formatted);
+
+    actix_web::Result::Ok(NamedFile::open(p)?)
 }
 
 async fn get_latest_file(project: &str, database: &Database) -> actix_web::Result<NamedFile> {
@@ -293,13 +320,11 @@ async fn get_project_information(database: Data<Database>) -> actix_web::Result<
         let path = entry.path();
         if path.is_dir() {
             if let Ok(file_name) = entry.file_name().into_string() {
-                let has_file = get_latest_file(&file_name, &database).await.is_ok();
-                let project_information = ProjectInformation {
-                    project: file_name,
-                    has_file,
-                };
+                let optional_project_data = get_project_data(&file_name, &database).await;
 
-                projects.push(project_information);
+                if let Some(project_data) = optional_project_data {
+                    projects.push(project_data);
+                }
             }
         }
     }
@@ -309,13 +334,49 @@ async fn get_project_information(database: Data<Database>) -> actix_web::Result<
     actix_web::Result::Ok(HttpResponse::Ok().json(json_result))
 }
 
-async fn get_status_badge(project: web::Path<(String, )>, database: Data<Database>) -> HttpResponse {
-    let status_badge = get_project_status_badge(project.into_inner().0, &database).await;
+async fn get_latest_status_badge(
+    project: web::Path<(String,)>,
+    database: Data<Database>,
+) -> HttpResponse {
+    let latest_status = get_latest_build_status(&project.into_inner().0, &database).await;
 
-    if !status_badge.is_empty() {
-        return HttpResponse::Ok()
-            .content_type("image/svg+xml")
-            .body(status_badge);
+    if let Some(status) = latest_status {
+        let badge = get_project_status_badge(status).await;
+
+        if !badge.is_empty() {
+            return HttpResponse::Ok().content_type("image/svg+xml").body(badge);
+        }
+    }
+
+    HttpResponse::NotFound().finish()
+}
+
+async fn get_status_badge_for_build(
+    path: web::Path<(String, i32)>,
+    database: Data<Database>,
+) -> HttpResponse {
+    let inner = path.into_inner();
+    let project = inner.0;
+    let build = inner.1 - 1;
+
+    println!("call for {}/{}", project, build);
+
+    if let Some(project_data) = get_project_data(&project, &database).await {
+        let build_info_optional = project_data.builds.get(build as usize);
+
+        println!("let some project data");
+
+        if let Some(build_info) = build_info_optional {
+            println!("let some build info optional");
+            let status = build_info.build_status.clone();
+            let status_badge = get_project_status_badge(status).await;
+
+            if !status_badge.is_empty() {
+                return HttpResponse::Ok()
+                    .content_type("image/svg+xml")
+                    .body(status_badge);
+            }
+        }
     }
 
     HttpResponse::NotFound().finish()
@@ -343,7 +404,12 @@ async fn get_project_data(project: &str, database: &Database) -> Option<ProjectD
     None
 }
 
-async fn save_project_build_data(project: String, status: String, database: &Database, archived_files: Option<Vec<String>>) {
+async fn save_project_build_data(
+    project: String,
+    status: String,
+    database: &Database,
+    archived_files: Option<Vec<String>>,
+) {
     let collection = database.collection("project_data");
     let project_data = get_project_data(&project, database).await;
 
@@ -354,7 +420,7 @@ async fn save_project_build_data(project: String, status: String, database: &Dat
         let build_data = BuildData {
             build_number: project_data.builds.len() as i32 + 1,
             build_status: status,
-            archived_files
+            archived_files,
         };
 
         // Add this build to the list
@@ -375,7 +441,7 @@ async fn save_project_build_data(project: String, status: String, database: &Dat
         let build_data = BuildData {
             build_number: 1,
             build_status: status,
-            archived_files
+            archived_files,
         };
         let project_data: ProjectData = ProjectData {
             project,
@@ -394,30 +460,20 @@ async fn save_project_build_data(project: String, status: String, database: &Dat
     }
 }
 
-async fn get_project_status_badge(project: String, database: &Database) -> String {
-    let build_status = get_latest_build_status(&project, &database).await;
-
+async fn get_project_status_badge(status: String) -> String {
     let mut badge_options: BadgeOptions = Default::default();
 
-    if let Some(status) = build_status {
-        if status.eq("passing") {
-            badge_options = BadgeOptions {
-                subject: "drovah".to_owned(),
-                status,
-                color: "#4c1".to_owned(),
-            };
-        } else if status.eq("failing") {
-            badge_options = BadgeOptions {
-                subject: "drovah".to_owned(),
-                status,
-                color: "#ed2e25".to_owned(),
-            };
-        }
-    } else if build_status.is_none() {
+    if status.eq("passing") {
         badge_options = BadgeOptions {
             subject: "drovah".to_owned(),
-            status: "unknown".to_owned(),
-            color: "#A9A9A9".to_owned(),
+            status,
+            color: "#4c1".to_owned(),
+        };
+    } else if status.eq("failing") {
+        badge_options = BadgeOptions {
+            subject: "drovah".to_owned(),
+            status,
+            color: "#ed2e25".to_owned(),
         };
     }
 
@@ -440,7 +496,7 @@ async fn get_latest_build_status(project: &str, database: &Database) -> Option<S
                 if let Some(builds) = document.get("builds").and_then(Bson::as_array) {
                     if let Some(last) = builds.last().and_then(Bson::as_document) {
                         if let Some(latest_build_status) =
-                        last.get("buildStatus").and_then(Bson::as_str)
+                            last.get("buildStatus").and_then(Bson::as_str)
                         {
                             return Some(String::from(latest_build_status));
                         }
@@ -470,17 +526,26 @@ pub async fn launch_webserver() -> io::Result<()> {
         App::new()
             .data(database)
             .wrap(middleware::Logger::default())
-            .service(web::resource("/{project}/badge").route(web::get().to(get_status_badge)))
+            .service(
+                web::resource("/{project}/badge").route(web::get().to(get_latest_status_badge)),
+            )
             .service(web::resource("/{project}/latest").route(web::get().to(api_get_latest_file)))
+            .service(
+                web::resource("/{project}/{build}/badge")
+                    .route(web::get().to(get_status_badge_for_build)),
+            )
+            .service(
+                web::resource("/{project}/{build}/{file}").route(web::get().to(get_file_for_build)),
+            )
             .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
             .service(web::resource("/").route(web::get().to(index)))
             .service(actix_files::Files::new("/", "static").show_files_listing())
             .wrap(Logger::default())
     })
-        .bind(drovah_config.web.address)?
-        .run()
-        .await
+    .bind(drovah_config.web.address)?
+    .run()
+    .await
 }
 
 #[cfg(test)]
