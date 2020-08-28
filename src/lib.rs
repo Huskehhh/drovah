@@ -2,20 +2,20 @@ extern crate actix_files;
 extern crate actix_web;
 extern crate env_logger;
 
+use std::{fs, io};
 use std::error::Error;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::{fs, io};
 
 use actix_files::NamedFile;
+use actix_web::{App, HttpResponse, HttpServer, middleware, web};
 use actix_web::http::StatusCode;
 use actix_web::middleware::Logger;
 use actix_web::web::{Data, Json};
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
 use futures::executor::block_on;
 use mongodb::{
-    bson::{doc, Bson},
+    bson::{Bson, doc},
     Client, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,7 @@ struct ProjectData {
 struct BuildData {
     build_number: i32,
     build_status: String,
+    archived_files: Option<Vec<String>>
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,26 +114,28 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
                         if run_commands(post_archive.commands, &project_path) {
                             println!("Successfully ran post-archive commands for '{}'", project);
                         } else {
-                            println!("Error occurred running post-archive commands for '{}'", ".");
+                            println!("Error occurred running post-archive commands for '{}'", project);
                         }
                     }
                 } else {
                     println!("Failed to archive files for '{}'", project);
                 }
+            } else {
+                save_project_build_data(project, "passing".to_owned(), database, None).await;
             }
-
-            save_project_build_data(project, "passing".to_owned(), database).await;
         } else {
             println!("'{}' has failed to build.", project);
-            save_project_build_data(project, "failing".to_owned(), database).await;
+            save_project_build_data(project, "failing".to_owned(), database, None).await;
         }
     }
     Ok(())
 }
 
 fn run_commands(commands: Vec<String>, directory: &str) -> bool {
+    let mut success = false;
+
     for command in commands {
-        let split: Vec<&str> = command.split(" ").collect();
+        let split: Vec<&str> = command.split(' ').collect();
 
         let program = split.first().expect("Error, commands are formatted wrong!");
 
@@ -147,10 +150,12 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
             .wait_with_output()
             .expect("Unexpectedly died on commands!");
 
-        return result.status.success();
+        if result.status.success() {
+            success = true;
+        }
     }
 
-    false
+    success
 }
 
 async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &Database) -> bool {
@@ -167,7 +172,7 @@ async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &
     for file_to_match in files_to_archive {
         let path_to_search = format!("data/projects/{}/{}", project, file_to_match);
         if let Some(matched) = match_filename_to_file(&path_to_search) {
-            let matched_file_name = matched.split("/").last().unwrap();
+            let matched_file_name = matched.split('/').last().unwrap();
             let to = format!(
                 "data/archive/{}/{}/{}",
                 project, build_number, matched_file_name
@@ -196,7 +201,7 @@ fn match_filename_to_file(filename: &str) -> Option<String> {
     }
 
     // If not, lets look for it
-    let file_to_look_for = filename.split("/").last().unwrap();
+    let file_to_look_for = filename.split('/').last().unwrap();
 
     // Find all files starting with
     if let Some(path_parent) = path.parent() {
@@ -261,7 +266,7 @@ async fn github_webhook(
 }
 
 async fn api_get_latest_file(
-    project: web::Path<(String,)>,
+    project: web::Path<(String, )>,
     database: Data<Database>,
 ) -> actix_web::Result<NamedFile> {
     let project = project.into_inner().0;
@@ -304,7 +309,7 @@ async fn get_project_information(database: Data<Database>) -> actix_web::Result<
     actix_web::Result::Ok(HttpResponse::Ok().json(json_result))
 }
 
-async fn get_status_badge(project: web::Path<(String,)>, database: Data<Database>) -> HttpResponse {
+async fn get_status_badge(project: web::Path<(String, )>, database: Data<Database>) -> HttpResponse {
     let status_badge = get_project_status_badge(project.into_inner().0, &database).await;
 
     if !status_badge.is_empty() {
@@ -338,7 +343,7 @@ async fn get_project_data(project: &str, database: &Database) -> Option<ProjectD
     None
 }
 
-async fn save_project_build_data(project: String, status: String, database: &Database) {
+async fn save_project_build_data(project: String, status: String, database: &Database, archived_files: Option<Vec<String>>) {
     let collection = database.collection("project_data");
     let project_data = get_project_data(&project, database).await;
 
@@ -349,6 +354,7 @@ async fn save_project_build_data(project: String, status: String, database: &Dat
         let build_data = BuildData {
             build_number: project_data.builds.len() as i32 + 1,
             build_status: status,
+            archived_files
         };
 
         // Add this build to the list
@@ -369,6 +375,7 @@ async fn save_project_build_data(project: String, status: String, database: &Dat
         let build_data = BuildData {
             build_number: 1,
             build_status: status,
+            archived_files
         };
         let project_data: ProjectData = ProjectData {
             project,
@@ -406,7 +413,7 @@ async fn get_project_status_badge(project: String, database: &Database) -> Strin
                 color: "#ed2e25".to_owned(),
             };
         }
-    } else if let None = build_status {
+    } else if build_status.is_none() {
         badge_options = BadgeOptions {
             subject: "drovah".to_owned(),
             status: "unknown".to_owned(),
@@ -433,7 +440,7 @@ async fn get_latest_build_status(project: &str, database: &Database) -> Option<S
                 if let Some(builds) = document.get("builds").and_then(Bson::as_array) {
                     if let Some(last) = builds.last().and_then(Bson::as_document) {
                         if let Some(latest_build_status) =
-                            last.get("buildStatus").and_then(Bson::as_str)
+                        last.get("buildStatus").and_then(Bson::as_str)
                         {
                             return Some(String::from(latest_build_status));
                         }
@@ -471,9 +478,9 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(actix_files::Files::new("/", "static").show_files_listing())
             .wrap(Logger::default())
     })
-    .bind(drovah_config.web.address)?
-    .run()
-    .await
+        .bind(drovah_config.web.address)?
+        .run()
+        .await
 }
 
 #[cfg(test)]

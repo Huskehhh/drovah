@@ -3,7 +3,8 @@ Vue.component('project', {
         projectName: String,
         buildStatus: String,
         latestBuild: String,
-        hasFiles: Boolean
+        hasFiles: Boolean,
+        builds: [{}],
     },
     template: '<div class="col-lg-3 col-md-6 text-center">\n' +
         '                        <div class="mt-5" style="padding-bottom: 30%;">\n' +
