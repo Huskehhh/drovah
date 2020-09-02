@@ -385,7 +385,7 @@ async fn get_status_badge_for_build(
 async fn index() -> actix_web::Result<HttpResponse> {
     Ok(HttpResponse::build(StatusCode::OK)
         .content_type("text/html; charset=utf-8")
-        .body(include_str!("../static/index.html")))
+        .body(include_str!("../static/dist/index.html")))
 }
 
 async fn get_project_data(project: &str, database: &Database) -> Option<ProjectData> {
@@ -540,7 +540,7 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
             .service(web::resource("/").route(web::get().to(index)))
-            .service(actix_files::Files::new("/", "static").show_files_listing())
+            .service(actix_files::Files::new("/", "static/dist/").show_files_listing())
             .wrap(Logger::default())
     })
     .bind(drovah_config.web.address)?
