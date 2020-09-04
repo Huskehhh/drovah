@@ -22,22 +22,26 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::stream::StreamExt;
 
+/// Represents data taken from github webhook
 #[derive(Debug, Deserialize)]
 struct WebhookData {
     repository: RepositoryData,
 }
 
+/// Represents data taken from github webhook
 #[derive(Debug, Deserialize)]
 struct RepositoryData {
     name: String,
 }
 
+/// Represents data to be provided through 'get_project_information'
 #[derive(Debug, Serialize, Deserialize)]
 struct ProjectData {
     project: String,
     builds: Vec<BuildData>,
 }
 
+/// Represents stored build data
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BuildData {
@@ -46,6 +50,7 @@ struct BuildData {
     archived_files: Option<Vec<String>>,
 }
 
+/// Represents project build configuration (.drovah)
 #[derive(Debug, Deserialize)]
 struct CIConfig {
     build: BuildConfig,
@@ -53,38 +58,46 @@ struct CIConfig {
     postarchive: Option<PostArchiveConfig>,
 }
 
+/// Represents the build section of .drovah
 #[derive(Debug, Deserialize)]
 struct BuildConfig {
     commands: Vec<String>,
 }
 
+/// Represents the archive section of .drovah
 #[derive(Debug, Deserialize)]
 struct ArchiveConfig {
     files: Vec<String>,
 }
 
+/// Represents the post archival section of .drovah
 #[derive(Debug, Deserialize)]
 struct PostArchiveConfig {
     commands: Vec<String>,
 }
 
+/// Represents the configuration of drovah (drovah.toml)
 #[derive(Debug, Deserialize)]
 struct DrovahConfig {
     web: WebServerConfig,
     mongo: MongoConfig,
 }
 
+/// Represents the mongo section of drovah.toml
 #[derive(Debug, Deserialize)]
 struct MongoConfig {
     mongo_connection_string: String,
     mongo_db: String,
 }
 
+/// Represents the web section of drovah.toml
 #[derive(Debug, Deserialize)]
 struct WebServerConfig {
     address: String,
 }
 
+/// Method to run a build for a project
+/// Takes the project name (String) and ref to database (&Database) to store result
 async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>> {
     println!("Building '{}'", project);
     let project_path = format!("data/projects/{}", project);
@@ -154,6 +167,8 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
     success
 }
 
+/// Archives nominated files for a project
+/// Files are stored in 'data/archive/<project>/<build number>/
 async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &Database) -> bool {
     let archive_folder = format!("data/archive/{}/", project);
     let archive_path = Path::new(&archive_folder);
@@ -196,6 +211,8 @@ async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &
     success
 }
 
+/// Returns the current build number of given project
+/// Defaults at 1
 async fn get_current_build_number(project: &str, database: &Database) -> i32 {
     if let Some(project_data) = get_project_data(project, database).await {
         return project_data.builds.len() as i32;
@@ -203,6 +220,7 @@ async fn get_current_build_number(project: &str, database: &Database) -> i32 {
     1
 }
 
+/// Matches a filename into a file
 fn match_filename_to_file(filename: &str) -> Option<String> {
     let path = Path::new(filename);
 
@@ -236,6 +254,8 @@ fn match_filename_to_file(filename: &str) -> Option<String> {
     None
 }
 
+/// Copies file from source to destination
+/// Will return whether or not it was successful
 fn copy(from_str: &str, to_str: &str) -> bool {
     let from = Path::new(from_str);
     let to = Path::new(to_str);
@@ -255,6 +275,9 @@ fn copy(from_str: &str, to_str: &str) -> bool {
     true
 }
 
+/// Handles webhook
+/// targeted towards GitHub's webhook
+/// however, would support others as long as they adhere to format
 async fn github_webhook(
     webhookdata: Json<WebhookData>,
     database: Data<Database>,
@@ -277,6 +300,8 @@ async fn github_webhook(
     actix_web::Result::Ok(HttpResponse::NotAcceptable().body("Project doesn't exist"))
 }
 
+/// Returns latest file
+/// If one does not exist, will just return an os error of unfound
 async fn api_get_latest_file(
     project: web::Path<(String,)>,
     database: Data<Database>,
@@ -292,6 +317,8 @@ async fn api_get_latest_file(
     actix_web::Result::Ok(file)
 }
 
+/// Returns specific file
+/// URL is <host>:<port>/<project>/<build>/<file>
 async fn get_file_for_build(
     path: web::Path<(String, String, String)>,
 ) -> actix_web::Result<NamedFile> {
@@ -307,6 +334,8 @@ async fn get_file_for_build(
     actix_web::Result::Ok(NamedFile::open(p)?)
 }
 
+/// Returns project information for current path
+/// URL is <host>:<port>/api/projects
 async fn get_project_information(database: Data<Database>) -> actix_web::Result<HttpResponse> {
     let dir = Path::new("data/projects/");
 
@@ -330,6 +359,8 @@ async fn get_project_information(database: Data<Database>) -> actix_web::Result<
     actix_web::Result::Ok(HttpResponse::Ok().json(json_result))
 }
 
+/// Returns latest status badge for given project
+/// URL is <host>:<port>/<project>/badge
 async fn get_latest_status_badge(
     project: web::Path<(String,)>,
     database: Data<Database>,
@@ -347,6 +378,8 @@ async fn get_latest_status_badge(
     HttpResponse::NotFound().finish()
 }
 
+/// Returns status badge for specific build
+/// URL is <host>:<port>/<project>/<build>/badge
 async fn get_status_badge_for_build(
     path: web::Path<(String, i32)>,
     database: Data<Database>,
@@ -373,12 +406,14 @@ async fn get_status_badge_for_build(
     HttpResponse::NotFound().finish()
 }
 
+/// Default path, returns the index file
 async fn index() -> actix_web::Result<HttpResponse> {
     Ok(HttpResponse::build(StatusCode::OK)
         .content_type("text/html; charset=utf-8")
         .body(include_str!("../static/dist/index.html")))
 }
 
+/// Returns project data struct optionally
 async fn get_project_data(project: &str, database: &Database) -> Option<ProjectData> {
     let collection = database.collection("project_data");
 
@@ -395,6 +430,7 @@ async fn get_project_data(project: &str, database: &Database) -> Option<ProjectD
     None
 }
 
+/// Saves project build data to database
 async fn save_project_build_data(
     project: String,
     status: String,
@@ -451,6 +487,7 @@ async fn save_project_build_data(
     }
 }
 
+/// Returns status badge for given status
 async fn get_project_status_badge(status: String) -> String {
     let mut badge_options: BadgeOptions = Default::default();
 
@@ -476,6 +513,7 @@ async fn get_project_status_badge(status: String) -> String {
     "".to_owned()
 }
 
+/// Retrieves the latest build status for a given project
 async fn get_latest_build_status(project: &str, database: &Database) -> Option<String> {
     let collection = database.collection("project_data");
 
@@ -500,6 +538,8 @@ async fn get_latest_build_status(project: &str, database: &Database) -> Option<S
     None
 }
 
+/// Launches the actix webserver
+/// Takes configuration from drovah.toml
 pub async fn launch_webserver() -> io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
