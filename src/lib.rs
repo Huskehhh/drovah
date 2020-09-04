@@ -282,7 +282,14 @@ async fn api_get_latest_file(
     database: Data<Database>,
 ) -> actix_web::Result<NamedFile> {
     let project = project.into_inner().0;
-    get_latest_file(&project, &database).await
+    let build_number = get_current_build_number(&project, &database).await;
+
+    let path_str = format!("data/archive/{}/{}/", &project, build_number);
+    let path = Path::new(&path_str);
+
+    let file = NamedFile::open(fs::read_dir(path)?.last().unwrap()?.path())?;
+
+    actix_web::Result::Ok(file)
 }
 
 async fn get_file_for_build(
@@ -298,17 +305,6 @@ async fn get_file_for_build(
     let p = Path::new(&formatted);
 
     actix_web::Result::Ok(NamedFile::open(p)?)
-}
-
-async fn get_latest_file(project: &str, database: &Database) -> actix_web::Result<NamedFile> {
-    let build_number = get_current_build_number(&project, &database).await;
-
-    let path_str = format!("data/archive/{}/{}/", &project, build_number);
-    let path = Path::new(&path_str);
-
-    let file = NamedFile::open(fs::read_dir(path)?.last().unwrap()?.path())?;
-
-    actix_web::Result::Ok(file)
 }
 
 async fn get_project_information(database: Data<Database>) -> actix_web::Result<HttpResponse> {
@@ -359,15 +355,10 @@ async fn get_status_badge_for_build(
     let project = inner.0;
     let build = inner.1 - 1;
 
-    println!("call for {}/{}", project, build);
-
     if let Some(project_data) = get_project_data(&project, &database).await {
         let build_info_optional = project_data.builds.get(build as usize);
 
-        println!("let some project data");
-
         if let Some(build_info) = build_info_optional {
-            println!("let some build info optional");
             let status = build_info.build_status.clone();
             let status_badge = get_project_status_badge(status).await;
 
@@ -552,6 +543,14 @@ pub async fn launch_webserver() -> io::Result<()> {
 mod tests {
     use super::*;
 
+    pub async fn setup_database() -> Database {
+        let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
+        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
+        let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string).await.unwrap();
+        let database = client.database(&drovah_config.mongo.mongo_db);
+        database
+    }
+
     #[test]
     fn test_file_matching() {
         let file_to_find = ".drovah";
@@ -568,5 +567,56 @@ mod tests {
 
         assert!(path.is_some());
         assert_eq!(path.unwrap(), String::from("./.drovah"));
+    }
+
+    #[tokio::test]
+    async fn test_latest_build_status() {
+        let db = setup_database().await;
+
+        let status = get_latest_build_status("drovah", &db).await;
+
+        assert!(status.is_some());
+
+        let status = get_latest_build_status("something_completely_abstract", &db).await;
+
+        assert!(status.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_status_badge() {
+        let status_badge = get_project_status_badge("passing".to_owned()).await;
+
+        assert_ne!(status_badge, "".to_owned());
+    }
+
+    #[tokio::test]
+    async fn test_get_project_data() {
+        let db = setup_database().await;
+
+        let project_data = get_project_data("drovah", &db).await;
+
+        assert!(project_data.is_some());
+
+        let project_data = get_project_data("something_absurd", &db).await;
+
+        assert!(project_data.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_build_number() {
+        let db = setup_database().await;
+
+        let build_num = get_current_build_number("drovah", &db).await;
+
+        assert_ne!(build_num, 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_build() {
+        let db = setup_database().await;
+
+        let build_result = run_build("drovah".to_owned(), &db).await;
+
+        assert!(build_result.is_ok());
     }
 }

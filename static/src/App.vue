@@ -53,22 +53,19 @@ export default {
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Merriweather+Sans&display=swap');
 
+body, html {
+  height: 100%;
+  background: url(assets/bg-masthead.jpg) no-repeat center;
+  background-size: cover;
+}
+
 #app {
+  padding-top: 20%;
   font-family: 'Merriweather Sans', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
   color: #1b252f;;
-  margin-top: 60px;
-}
-
-body, html {
-  padding-top: 10rem;
-  background: linear-gradient(to bottom, rgba(92, 77, 66, .8) 0, rgba(92, 77, 66, .8) 100%), url(assets/bg-masthead.jpg);
-  height: 100%;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
 }
 
 a {
@@ -185,5 +182,6 @@ a:hover {
 .fixed-bottom > p {
   line-height: 10px;
   font-size: 1.5rem;
+  color: #6c6c6c;
 }
 </style>
