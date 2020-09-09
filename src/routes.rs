@@ -1,10 +1,13 @@
 extern crate actix_files;
 extern crate actix_web;
 
-use crate::{get_latest_build_status, get_project_data, get_project_status_badge};
+use crate::{
+    get_current_build_number, get_latest_build_status, get_project_data, get_project_status_badge,
+    run_build, run_commands, WebhookData,
+};
 use actix_files::NamedFile;
 use actix_web::http::StatusCode;
-use actix_web::web::Data;
+use actix_web::web::{Data, Json};
 use actix_web::{web, HttpResponse};
 use mongodb::Database;
 use serde_json::json;
@@ -13,7 +16,7 @@ use std::path::Path;
 
 /// Returns specific file
 /// URL is <host>:<port>/<project>/<build>/<file>
-pub async fn get_file_for_build(
+pub(crate) async fn get_file_for_build(
     path: web::Path<(String, String, String)>,
 ) -> actix_web::Result<NamedFile> {
     let inner = path.into_inner();
@@ -30,7 +33,9 @@ pub async fn get_file_for_build(
 
 /// Returns project information for current path
 /// URL is <host>:<port>/api/projects
-pub async fn get_project_information(database: Data<Database>) -> actix_web::Result<HttpResponse> {
+pub(crate) async fn get_project_information(
+    database: Data<Database>,
+) -> actix_web::Result<HttpResponse> {
     let dir = Path::new("data/projects/");
 
     let mut projects = vec![];
@@ -55,7 +60,7 @@ pub async fn get_project_information(database: Data<Database>) -> actix_web::Res
 
 /// Returns latest status badge for given project
 /// URL is <host>:<port>/<project>/badge
-pub async fn get_latest_status_badge(
+pub(crate) async fn get_latest_status_badge(
     project: web::Path<(String,)>,
     database: Data<Database>,
 ) -> HttpResponse {
@@ -74,7 +79,7 @@ pub async fn get_latest_status_badge(
 
 /// Returns status badge for specific build
 /// URL is <host>:<port>/<project>/<build>/badge
-pub async fn get_status_badge_for_build(
+pub(crate) async fn get_status_badge_for_build(
     path: web::Path<(String, i32)>,
     database: Data<Database>,
 ) -> HttpResponse {
@@ -100,8 +105,52 @@ pub async fn get_status_badge_for_build(
     HttpResponse::NotFound().finish()
 }
 
+/// Handles webhook
+/// targeted towards GitHub's webhook
+/// however, would support others as long as they adhere to format
+/// URL is <host>:<port>/webhook
+pub(crate) async fn github_webhook(
+    webhookdata: Json<WebhookData>,
+    database: Data<Database>,
+) -> actix_web::Result<HttpResponse> {
+    let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
+    let path = Path::new(&project_path);
+    if path.exists() {
+        tokio::spawn(async move {
+            let commands = vec!["git pull".to_owned()];
+            run_commands(commands, &project_path);
+
+            if let Err(e) = run_build(webhookdata.repository.name.clone(), &database).await {
+                eprintln!("Error! {}", e);
+            }
+        });
+
+        return actix_web::Result::Ok(HttpResponse::NoContent().finish());
+    }
+
+    actix_web::Result::Ok(HttpResponse::NotAcceptable().body("Project doesn't exist"))
+}
+
+/// Returns latest file
+/// If one does not exist, will just return an os error of not found
+/// <host>:<port>/<project>/latest
+pub(crate) async fn get_latest_file(
+    project: web::Path<(String,)>,
+    database: Data<Database>,
+) -> actix_web::Result<NamedFile> {
+    let project = project.into_inner().0;
+    let build_number = get_current_build_number(&project, &database).await;
+
+    let path_str = format!("data/archive/{}/{}/", &project, build_number);
+    let path = Path::new(&path_str);
+
+    let file = NamedFile::open(fs::read_dir(path)?.last().unwrap()?.path())?;
+
+    actix_web::Result::Ok(file)
+}
+
 /// Default path, returns the index file
-pub async fn index() -> actix_web::Result<HttpResponse> {
+pub(crate) async fn index() -> actix_web::Result<HttpResponse> {
     Ok(HttpResponse::build(StatusCode::OK)
         .content_type("text/html; charset=utf-8")
         .body(include_str!("../static/dist/index.html")))

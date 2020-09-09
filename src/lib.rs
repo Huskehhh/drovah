@@ -10,13 +10,11 @@ use std::process::{Command, Stdio};
 use std::{fs, io};
 
 use crate::routes::{
-    get_file_for_build, get_latest_status_badge, get_project_information,
-    get_status_badge_for_build, index,
+    get_file_for_build, get_latest_file, get_latest_status_badge, get_project_information,
+    get_status_badge_for_build, github_webhook, index,
 };
-use actix_files::NamedFile;
 use actix_web::middleware::Logger;
-use actix_web::web::{Data, Json};
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
+use actix_web::{middleware, web, App, HttpServer};
 use badge::{Badge, BadgeOptions};
 use futures::executor::block_on;
 use mongodb::{
@@ -279,48 +277,6 @@ fn copy(from_str: &str, to_str: &str) -> bool {
     true
 }
 
-/// Handles webhook
-/// targeted towards GitHub's webhook
-/// however, would support others as long as they adhere to format
-async fn github_webhook(
-    webhookdata: Json<WebhookData>,
-    database: Data<Database>,
-) -> actix_web::Result<HttpResponse> {
-    let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
-    let path = Path::new(&project_path);
-    if path.exists() {
-        tokio::spawn(async move {
-            let commands = vec!["git pull".to_owned()];
-            run_commands(commands, &project_path);
-
-            if let Err(e) = run_build(webhookdata.repository.name.clone(), &database).await {
-                eprintln!("Error! {}", e);
-            }
-        });
-
-        return actix_web::Result::Ok(HttpResponse::NoContent().finish());
-    }
-
-    actix_web::Result::Ok(HttpResponse::NotAcceptable().body("Project doesn't exist"))
-}
-
-/// Returns latest file
-/// If one does not exist, will just return an os error of unfound
-async fn api_get_latest_file(
-    project: web::Path<(String,)>,
-    database: Data<Database>,
-) -> actix_web::Result<NamedFile> {
-    let project = project.into_inner().0;
-    let build_number = get_current_build_number(&project, &database).await;
-
-    let path_str = format!("data/archive/{}/{}/", &project, build_number);
-    let path = Path::new(&path_str);
-
-    let file = NamedFile::open(fs::read_dir(path)?.last().unwrap()?.path())?;
-
-    actix_web::Result::Ok(file)
-}
-
 /// Returns project data struct optionally
 async fn get_project_data(project: &str, database: &Database) -> Option<ProjectData> {
     let collection = database.collection("project_data");
@@ -468,7 +424,7 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(
                 web::resource("/{project}/badge").route(web::get().to(get_latest_status_badge)),
             )
-            .service(web::resource("/{project}/latest").route(web::get().to(api_get_latest_file)))
+            .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
             .service(
                 web::resource("/{project}/{build}/badge")
                     .route(web::get().to(get_status_badge_for_build)),
@@ -497,8 +453,7 @@ mod tests {
         let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string)
             .await
             .unwrap();
-        let database = client.database(&drovah_config.mongo.mongo_db);
-        database
+        client.database(&drovah_config.mongo.mongo_db)
     }
 
     #[test]
