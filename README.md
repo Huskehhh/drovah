@@ -66,6 +66,7 @@ commands = ["gradle clean build"]
 
 [archive]
 files = ["build/libs/someproject-"]
+append_buildnumber = true
 
 [postarchive]
 commands = ["echo 'woohoo' >> somefile"]
@@ -74,13 +75,18 @@ commands = ["echo 'woohoo' >> somefile"]
 #### Explanation of configuration options
 ``build`` must be an array of strings which will represent your commands, they are run in order.
 
-(OPTIONAL) ``archive`` must be an array of strings containing path/pattern of files, relative path of your project. This will attempt to match the filename, eg, the above ``[archive]`` configuration will match both of these files
+(OPTIONAL SECTION) ``archive``
+
+``files`` must be an array of strings containing path/pattern of files, relative path of your project. This will attempt to match the filename, eg, the above ``[archive]`` configuration will match both of these files
+
+``append_buildnumber`` must be a boolean, this option just applies the current build number to the final archived files
 
 - 'build/libs/someproject-1.1.jar'
 - 'build/libs/someproject-wahoo.txt'
 
+(OPTIONAL SECTION) ``postarchive``
 
-(OPTIONAL) ``postarchive`` must be an array of strings which will represent commands to be run AFTER successful builds, they are run in order. The running context of these commands is the drovah binary location.
+``commands`` must be an array of strings which will represent commands to be run AFTER successful builds, they are run in order. The running context of these commands is the drovah binary location.
 
 ## Managing projects
 
