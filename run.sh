@@ -1,4 +1,4 @@
 cd static
-yarn build -g
+npm run build
 cd ..
-cargo run --release
+cargo run

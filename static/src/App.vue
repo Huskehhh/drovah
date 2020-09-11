@@ -9,6 +9,7 @@
         <div class="col-lg-8 align-self-baseline">
           <div class="row" v-if="!loading">
             <project
+                id="project"
                 :key="project.project"
                 v-bind:builds="project.builds"
                 v-bind:project-name="project.project"
@@ -176,12 +177,12 @@ a:hover {
 }
 
 .fixed-bottom {
-  padding-top: 50%;
+  position: fixed;
+  bottom: 0;
+  align-self: center;
 }
 
-.fixed-bottom > p {
-  line-height: 10px;
-  font-size: 1.5rem;
-  color: #6c6c6c;
+#project {
+  padding: 2rem;
 }
 </style>
