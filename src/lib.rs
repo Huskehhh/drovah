@@ -210,7 +210,11 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
         let settings_string = fs::read_to_string(ci_settings_file)?;
         let ci_config: CIConfig = toml::from_str(&settings_string)?;
 
-        if run_commands(ci_config.build.commands, &project_path, ci_config.archive.is_some()) {
+        if run_commands(
+            ci_config.build.commands,
+            &project_path,
+            ci_config.archive.is_some(),
+        ) {
             println!("Success! '{}' has been built.", project);
 
             if let Some(files) = ci_config.archive {
@@ -260,14 +264,18 @@ fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool 
                 .stdout(Stdio::from(outputs))
                 .stderr(Stdio::from(errors))
                 .spawn()
-                .expect("run_commands failed, are they formatted correctly? is the program installed?");
+                .expect(
+                    "run_commands failed, are they formatted correctly? is the program installed?",
+                );
         } else {
             process = Command::new(program)
                 .current_dir(directory)
                 .args(&split[1..])
                 .stdout(Stdio::piped())
                 .spawn()
-                .expect("run_commands failed, are they formatted correctly? is the program installed?");
+                .expect(
+                    "run_commands failed, are they formatted correctly? is the program installed?",
+                );
         }
 
         let result = process
@@ -309,7 +317,10 @@ async fn archive_files(
     if copy(&from, &to) {
         filenames.push("build.log".to_owned());
     } else {
-        println!("Error copying build.log for {} with build number: {}", project, build_number);
+        println!(
+            "Error copying build.log for {} with build number: {}",
+            project, build_number
+        );
     }
 
     // Copy other files
