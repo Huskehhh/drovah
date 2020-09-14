@@ -19,9 +19,10 @@ If you want a feature I don't current have planned, please create an issue
 
 - Simple configuration
 - Supports whatever build tool you want
-- Simple frontend (Latest file retrieval + build status. More coming soon)
+- Simple frontend
 - Minimal resource usage
 - Webhook for automated builds/archival/status
+- Github webhook secret auth
 - Successful build archival (numerous builds)
 - Support for post archival actions
 - Latest build retrieval through ``http://host:port/<project>/latest``
@@ -33,8 +34,9 @@ If you want a feature I don't current have planned, please create an issue
 Prerequisites:
 - git
 - MongoDB server
+- npm
 
-Clone the repo and run using ``cargo run --release`` - default server will be running at http://localhost:8000
+Clone the repo and run using ``./run.sh` - default server will be running at http://localhost:8000
 
 For production use, I recommend binding drovah to localhost and creating a reverse proxy from nginx/apache.
 
@@ -66,6 +68,7 @@ commands = ["gradle clean build"]
 
 [archive]
 files = ["build/libs/someproject-"]
+append_buildnumber = true
 
 [postarchive]
 commands = ["echo 'woohoo' >> somefile"]
@@ -74,13 +77,18 @@ commands = ["echo 'woohoo' >> somefile"]
 #### Explanation of configuration options
 ``build`` must be an array of strings which will represent your commands, they are run in order.
 
-(OPTIONAL) ``archive`` must be an array of strings containing path/pattern of files, relative path of your project. This will attempt to match the filename, eg, the above ``[archive]`` configuration will match both of these files
+(OPTIONAL SECTION) ``archive``
+
+``files`` must be an array of strings containing path/pattern of files, relative path of your project. This will attempt to match the filename, eg, the above ``[archive]`` configuration will match both of these files
+
+``append_buildnumber`` must be a boolean, this option just applies the current build number to the final archived files
 
 - 'build/libs/someproject-1.1.jar'
 - 'build/libs/someproject-wahoo.txt'
 
+(OPTIONAL SECTION) ``postarchive``
 
-(OPTIONAL) ``postarchive`` must be an array of strings which will represent commands to be run AFTER successful builds, they are run in order. The running context of these commands is the drovah binary location.
+``commands`` must be an array of strings which will represent commands to be run AFTER successful builds, they are run in order. The running context of these commands is the drovah binary location.
 
 ## Managing projects
 
@@ -105,4 +113,4 @@ If you want to build from some other source, here's an example payload
 
 This will attempt to build the ``drovah`` project, if ``data/projects/drovah/`` does not exist, or doesn't contain a ``.drovah`` file, the build will fail
 
-### Note if you wish to remove the build status badge when removing a project, you will need to do so manually in the database
+Note if you wish to remove the build status badge when removing a project, you will need to do so manually in the database
