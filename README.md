@@ -1,32 +1,28 @@
 # drovah ![build status](https://ci.husk.pro/drovah/badge)
 Simple, fast, standalone continuous integration service written in Rust
 
-This project is entirely for fun and building on my rust knowledge,
-however, was created for the purpose of being an ultra lightweight, fast and painless implementation of a continuous integration service.
+This project is entirely for fun and building on my rust knowledge, however, was created for the purpose of being an ultra lightweight, fast and painless implementation of a continuous integration service.
 
-Please note that drovah is still very much WIP!
+drovah comes with a basic frontend that will allow you to download any archived files as well as view past build statuses!
 
 ## Demo
 
 [Demo available here](https://ci.husk.pro/)
 
 ## Development
-[You can follow the development of new features here](https://github.com/Huskehhh/drovah/projects/2)
+[You can follow the development of new features here](https://github.com/Huskehhh/drovah/projects/3)
 
-If you want a feature I don't current have planned, please create an issue
+If you want a feature I don't current have planned, please create an issue!
 
 ## Current Features
 
-- Simple configuration
+- Stupid simple configuration
 - Supports whatever build tool you want
-- Simple frontend
-- Minimal resource usage
-- Webhook for automated builds/archival/status
-- Github webhook secret auth
+- Simple frontend supporting viewing previous build statuses and downloading per build archived files
+- Minimal resource usage (the demo above is running on 6MB of RAM)
+- GitHub Webhook support for automation (includes the use of secure token to ensure security)
 - Successful build archival (numerous builds)
 - Support for post archival actions
-- Latest build retrieval through ``http://host:port/<project>/latest``
-- Build status banner retrievable through ``http://host:port/<project>/badge``
 
 ## Setup
 
@@ -100,7 +96,9 @@ Similarly, just remove the folders you no longer want to track
 
 The webhook by default is available at http://localhost:8000/webhook
 
-This webhook supports GitHub, and can be set up using the ``application/json`` payload.
+This webhook is targetted at GitHub, and can be set up using the ``application/json`` payload.
+
+It will also require a secret which can be set locally through the ``GITHUB_SECRET`` environment variable
 
 If you want to build from some other source, here's an example payload
 ```json
@@ -113,4 +111,4 @@ If you want to build from some other source, here's an example payload
 
 This will attempt to build the ``drovah`` project, if ``data/projects/drovah/`` does not exist, or doesn't contain a ``.drovah`` file, the build will fail
 
-Note if you wish to remove the build status badge when removing a project, you will need to do so manually in the database
+Note when removing a project, also remove it from the database!
