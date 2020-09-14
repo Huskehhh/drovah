@@ -19,9 +19,10 @@ If you want a feature I don't current have planned, please create an issue
 
 - Simple configuration
 - Supports whatever build tool you want
-- Simple frontend (Latest file retrieval + build status. More coming soon)
+- Simple frontend
 - Minimal resource usage
 - Webhook for automated builds/archival/status
+- Github webhook secret auth
 - Successful build archival (numerous builds)
 - Support for post archival actions
 - Latest build retrieval through ``http://host:port/<project>/latest``
@@ -112,4 +113,4 @@ If you want to build from some other source, here's an example payload
 
 This will attempt to build the ``drovah`` project, if ``data/projects/drovah/`` does not exist, or doesn't contain a ``.drovah`` file, the build will fail
 
-### Note if you wish to remove the build status badge when removing a project, you will need to do so manually in the database
+Note if you wish to remove the build status badge when removing a project, you will need to do so manually in the database

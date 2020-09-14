@@ -1,10 +1,7 @@
 extern crate actix_files;
 extern crate actix_web;
 
-use crate::{
-    get_current_build_number, get_latest_build_status, get_project_data, get_project_status_badge,
-    run_build, run_commands, WebhookData,
-};
+use crate::{get_current_build_number, get_latest_build_status, get_project_data, get_project_status_badge, run_build, run_commands, WebhookData, verify_authentication_header};
 use actix_files::NamedFile;
 use actix_web::http::StatusCode;
 use actix_web::web::{Data, Json};
@@ -13,6 +10,8 @@ use mongodb::Database;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
+use actix_web::http::header::HeaderMap;
+use std::collections::HashMap;
 
 /// Returns specific file
 /// URL is <host>:<port>/<project>/<build>/<file>
@@ -112,7 +111,15 @@ pub(crate) async fn get_status_badge_for_build(
 pub(crate) async fn github_webhook(
     webhookdata: Json<WebhookData>,
     database: Data<Database>,
+    request: web::HttpRequest,
+    body: web::Bytes,
 ) -> actix_web::Result<HttpResponse> {
+    // Begin github secret auth
+    let body: Vec<u8> = body.to_vec();
+    let headers = get_headers_hash_map(request.headers())?;
+
+    verify_authentication_header(&headers, &body)?;
+
     let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
     let path = Path::new(&project_path);
     if path.exists() {
@@ -129,6 +136,28 @@ pub(crate) async fn github_webhook(
     }
 
     actix_web::Result::Ok(HttpResponse::NotAcceptable().body("Project doesn't exist"))
+}
+
+/// Credit - https://github.com/Nukesor/webhook-server/blob/master/src/web.rs#L148
+fn get_headers_hash_map(map: &HeaderMap) -> Result<HashMap<String, String>, HttpResponse> {
+    let mut headers = HashMap::new();
+
+    for (key, header_value) in map.iter() {
+        let key = key.as_str().to_string();
+        let value: String;
+        match header_value.to_str() {
+            Ok(header_value) => value = header_value.to_string(),
+            Err(error) => {
+                let message = format!("Couldn't parse header: {}", error);
+                println!("{}", message);
+                return Err(HttpResponse::Unauthorized().body(message));
+            }
+        };
+
+        headers.insert(key, value);
+    }
+
+    Ok(headers)
 }
 
 /// Returns latest file
