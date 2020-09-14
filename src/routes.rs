@@ -109,7 +109,6 @@ pub(crate) async fn get_status_badge_for_build(
 /// however, would support others as long as they adhere to format
 /// URL is <host>:<port>/webhook
 pub(crate) async fn github_webhook(
-    webhookdata: Json<WebhookData>,
     database: Data<Database>,
     request: web::HttpRequest,
     body: web::Bytes,
@@ -119,6 +118,9 @@ pub(crate) async fn github_webhook(
     let headers = get_headers_hash_map(request.headers())?;
 
     verify_authentication_header(&headers, &body)?;
+
+    // Parse json manually as actix doesn't support multiple extractors
+    let webhookdata: WebhookData = serde_json::from_slice(&body).expect("Json error");
 
     let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
     let path = Path::new(&project_path);
