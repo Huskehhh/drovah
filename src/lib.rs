@@ -26,6 +26,7 @@ use crate::routes::{
     get_file_for_build, get_latest_file, get_latest_status_badge, get_project_information,
     get_status_badge_for_build, github_webhook, index,
 };
+use std::fs::File;
 
 mod routes;
 
@@ -209,7 +210,7 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
         let settings_string = fs::read_to_string(ci_settings_file)?;
         let ci_config: CIConfig = toml::from_str(&settings_string)?;
 
-        if run_commands(ci_config.build.commands, &project_path) {
+        if run_commands(ci_config.build.commands, &project_path, ci_config.archive.is_some()) {
             println!("Success! '{}' has been built.", project);
 
             if let Some(files) = ci_config.archive {
@@ -217,7 +218,7 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
                     println!("Successfully archived files for '{}'", project);
 
                     if let Some(post_archive) = ci_config.postarchive {
-                        if run_commands(post_archive.commands, &project_path) {
+                        if run_commands(post_archive.commands, &project_path, false) {
                             println!("Successfully ran post-archive commands for '{}'", project);
                         } else {
                             println!(
@@ -240,20 +241,34 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
     Ok(())
 }
 
-fn run_commands(commands: Vec<String>, directory: &str) -> bool {
+fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool {
     let mut success = false;
 
     for command in commands {
         let split: Vec<&str> = command.split(' ').collect();
 
         let program = split.first().expect("Error, commands are formatted wrong!");
+        let process;
 
-        let process = Command::new(program)
-            .current_dir(directory)
-            .args(&split[1..])
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("run_commands failed, are they formatted correctly? is the program installed?");
+        if save_log {
+            let outputs = File::create("build.log").expect("Error creating file 'build.log'");
+            let errors = outputs.try_clone().unwrap();
+
+            process = Command::new(program)
+                .current_dir(directory)
+                .args(&split[1..])
+                .stdout(Stdio::from(outputs))
+                .stderr(Stdio::from(errors))
+                .spawn()
+                .expect("run_commands failed, are they formatted correctly? is the program installed?");
+        } else {
+            process = Command::new(program)
+                .current_dir(directory)
+                .args(&split[1..])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("run_commands failed, are they formatted correctly? is the program installed?");
+        }
 
         let result = process
             .wait_with_output()
@@ -288,6 +303,16 @@ async fn archive_files(
     let mut success = false;
     let mut filenames = vec![];
 
+    // Copy log file
+    let from = format!("data/projects/{}/build.log", project);
+    let to = format!("data/archive/{}/{}/build.log", project, build_number);
+    if copy(&from, &to) {
+        filenames.push("build.log".to_owned());
+    } else {
+        println!("Error copying build.log for {} with build number: {}", project, build_number);
+    }
+
+    // Copy other files
     for file_to_match in files_to_archive {
         let path_to_search = format!("data/projects/{}/{}", project, file_to_match);
         if let Some(matched) = match_filename_to_file(&path_to_search) {

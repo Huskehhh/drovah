@@ -132,7 +132,7 @@ pub(crate) async fn github_webhook(
     if path.exists() {
         tokio::spawn(async move {
             let commands = vec!["git pull".to_owned()];
-            run_commands(commands, &project_path);
+            run_commands(commands, &project_path, false);
 
             if let Err(e) = run_build(webhookdata.repository.name.clone(), &database).await {
                 eprintln!("Error! {}", e);
