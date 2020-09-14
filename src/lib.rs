@@ -2,20 +2,20 @@ extern crate actix_files;
 extern crate actix_web;
 extern crate env_logger;
 
-use std::{env, fs, io};
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::{env, fs, io};
 
-use actix_web::{App, HttpResponse, HttpServer, middleware, web};
 use actix_web::middleware::Logger;
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
 use futures::executor::block_on;
 use hmac::{Hmac, Mac, NewMac};
 use mongodb::{
-    bson::{Bson, doc},
+    bson::{doc, Bson},
     Client, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -269,7 +269,12 @@ fn run_commands(commands: Vec<String>, directory: &str) -> bool {
 
 /// Archives nominated files for a project
 /// Files are stored in 'data/archive/<project>/<build number>/
-async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &Database, append_buildnumber: Option<bool>) -> bool {
+async fn archive_files(
+    files_to_archive: Vec<String>,
+    project: &str,
+    database: &Database,
+    append_buildnumber: Option<bool>,
+) -> bool {
     let archive_folder = format!("data/archive/{}/", project);
     let archive_path = Path::new(&archive_folder);
     if !archive_path.exists() {
@@ -292,16 +297,14 @@ async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &
                 if append_buildnumber.unwrap() {
                     let ext = Path::new(matched_file_name)
                         .extension()
-                        .and_then(OsStr::to_str).unwrap();
+                        .and_then(OsStr::to_str)
+                        .unwrap();
 
                     let replace = format!(".{}", ext);
                     let filename = matched_file_name.replace(&replace, "");
                     let final_file = format!("{}-b{}.{}", filename, build_number, ext);
 
-                    let to = format!(
-                        "data/archive/{}/{}/{}",
-                        project, build_number, final_file
-                    );
+                    let to = format!("data/archive/{}/{}/{}", project, build_number, final_file);
 
                     if copy(&matched, &to) {
                         filenames.push(final_file.to_owned());
@@ -329,7 +332,7 @@ async fn archive_files(files_to_archive: Vec<String>, project: &str, database: &
             database,
             Some(filenames),
         )
-            .await;
+        .await;
     }
 
     success
@@ -511,7 +514,7 @@ async fn get_latest_build_status(project: &str, database: &Database) -> Option<S
                 if let Some(builds) = document.get("builds").and_then(Bson::as_array) {
                     if let Some(last) = builds.last().and_then(Bson::as_document) {
                         if let Some(latest_build_status) =
-                        last.get("buildStatus").and_then(Bson::as_str)
+                            last.get("buildStatus").and_then(Bson::as_str)
                         {
                             return Some(String::from(latest_build_status));
                         }
@@ -560,9 +563,9 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(actix_files::Files::new("/", "static/dist/").show_files_listing())
             .wrap(Logger::default())
     })
-        .bind(drovah_config.web.address)?
-        .run()
-        .await
+    .bind(drovah_config.web.address)?
+    .run()
+    .await
 }
 
 #[cfg(test)]
@@ -654,7 +657,8 @@ mod tests {
         let matched_file_name = "project-v2.1.zip";
         let ext = Path::new(matched_file_name)
             .extension()
-            .and_then(OsStr::to_str).unwrap();
+            .and_then(OsStr::to_str)
+            .unwrap();
 
         let build_number = 5;
 

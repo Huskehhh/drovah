@@ -1,17 +1,22 @@
 extern crate actix_files;
 extern crate actix_web;
 
-use crate::{get_current_build_number, get_latest_build_status, get_project_data, get_project_status_badge, run_build, run_commands, WebhookData, verify_authentication_header};
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+
 use actix_files::NamedFile;
+use actix_web::http::header::HeaderMap;
 use actix_web::http::StatusCode;
-use actix_web::web::{Data, Json};
+use actix_web::web::Data;
 use actix_web::{web, HttpResponse};
 use mongodb::Database;
 use serde_json::json;
-use std::fs;
-use std::path::Path;
-use actix_web::http::header::HeaderMap;
-use std::collections::HashMap;
+
+use crate::{
+    get_current_build_number, get_latest_build_status, get_project_data, get_project_status_badge,
+    run_build, run_commands, verify_authentication_header, WebhookData,
+};
 
 /// Returns specific file
 /// URL is <host>:<port>/<project>/<build>/<file>
