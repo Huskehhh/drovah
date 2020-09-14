@@ -61,12 +61,13 @@ body, html {
 }
 
 #app {
-  padding-top: 20%;
+  position: relative;
+  top: 10%;
   font-family: 'Merriweather Sans', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
-  color: #1b252f;;
+  color: #1b252f;
 }
 
 a {
