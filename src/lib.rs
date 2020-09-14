@@ -318,7 +318,10 @@ async fn archive_files(
     if copy(&from, &to) {
         filenames.push("build.log".to_owned());
         if let Err(e) = fs::remove_file(Path::new(&from)) {
-            eprintln!("Error when deleting build.log for project: {}, {}", project, e);
+            eprintln!(
+                "Error when deleting build.log for project: {}, {}",
+                project, e
+            );
         }
     } else {
         println!(
