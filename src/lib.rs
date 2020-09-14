@@ -255,7 +255,8 @@ fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool 
         let process;
 
         if save_log {
-            let outputs = File::create("build.log").expect("Error creating file 'build.log'");
+            let output_path = format!("{}/build.log", directory);
+            let outputs = File::create(&output_path).expect("Error creating file 'build.log'");
             let errors = outputs.try_clone().unwrap();
 
             process = Command::new(program)
