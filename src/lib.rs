@@ -317,6 +317,9 @@ async fn archive_files(
     let to = format!("data/archive/{}/{}/build.log", project, build_number);
     if copy(&from, &to) {
         filenames.push("build.log".to_owned());
+        if let Err(e) = fs::remove_file(Path::new(&from)) {
+            eprintln!("Error when deleting build.log for project: {}, {}", project, e);
+        }
     } else {
         println!(
             "Error copying build.log for {} with build number: {}",
