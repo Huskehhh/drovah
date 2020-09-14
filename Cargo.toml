@@ -1,6 +1,6 @@
 [package]
 name = "drovah"
-version = "0.1.0-alpha"
+version = "0.1.0-beta"
 authors = ["Jordyn <jordyn@husk.pro>"]
 edition = "2018"
 
