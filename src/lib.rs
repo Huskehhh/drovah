@@ -307,7 +307,11 @@ async fn archive_files(
         }
     }
 
-    let build_number = get_current_build_number(project, database).await + 1;
+    let mut build_number = get_current_build_number(project, database).await;
+    // If build number is not one, we need to increment it
+    if build_number != 1 {
+        build_number += 1;
+    }
 
     let mut success = false;
     let mut filenames = vec![];

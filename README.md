@@ -36,7 +36,7 @@ Prerequisites:
 - MongoDB server
 - npm
 
-Clone the repo and run using ``./run.sh` - default server will be running at http://localhost:8000
+Clone the repo and run using ``./run.sh`` - default server will be running at http://localhost:8000
 
 For production use, I recommend binding drovah to localhost and creating a reverse proxy from nginx/apache.
 
