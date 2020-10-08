@@ -5,6 +5,7 @@ extern crate env_logger;
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsStr;
+use std::fs::File;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::{env, fs, io};
@@ -26,7 +27,6 @@ use crate::routes::{
     get_file_for_build, get_latest_file, get_latest_status_badge, get_project_information,
     get_status_badge_for_build, github_webhook, index,
 };
-use std::fs::File;
 
 mod routes;
 
@@ -248,6 +248,8 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
 fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool {
     let mut success = 0;
 
+    let commands_len = commands.len();
+
     for command in commands {
         let split: Vec<&str> = command.split(' ').collect();
 
@@ -288,7 +290,7 @@ fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool 
         }
     }
 
-    return success as usize == commands.len();
+    success as usize == commands_len
 }
 
 /// Archives nominated files for a project
