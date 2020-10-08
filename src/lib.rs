@@ -246,7 +246,7 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
 }
 
 fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool {
-    let mut success = false;
+    let mut success = 0;
 
     for command in commands {
         let split: Vec<&str> = command.split(' ').collect();
@@ -284,11 +284,11 @@ fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool 
             .expect("Unexpectedly died on commands!");
 
         if result.status.success() {
-            success = true;
+            success += 1;
         }
     }
 
-    success
+    return success as usize == commands.len();
 }
 
 /// Archives nominated files for a project
