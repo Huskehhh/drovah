@@ -692,15 +692,6 @@ mod tests {
         assert_ne!(build_num, 1);
     }
 
-    #[tokio::test]
-    async fn test_run_build() {
-        let db = setup_database().await;
-
-        let build_result = run_build("drovah".to_owned(), &db).await;
-
-        assert!(build_result.is_ok());
-    }
-
     #[test]
     fn test_file_append_build_number() {
         let matched_file_name = "project-v2.1.zip";
