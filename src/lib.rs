@@ -21,12 +21,12 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
-use tokio::stream::StreamExt;
 
 use crate::routes::{
     get_file_for_build, get_latest_file, get_latest_status_badge, get_project_information,
     get_status_badge_for_build, github_webhook, index,
 };
+use futures::StreamExt;
 
 mod routes;
 
