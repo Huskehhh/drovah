@@ -14,6 +14,7 @@ use actix_web::middleware::Logger;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
 use futures::executor::block_on;
+use futures::StreamExt;
 use hmac::{Hmac, Mac, NewMac};
 use mongodb::{
     bson::{doc, Bson},
@@ -26,7 +27,6 @@ use crate::routes::{
     get_file_for_build, get_latest_file, get_latest_status_badge, get_project_information,
     get_status_badge_for_build, github_webhook, index,
 };
-use futures::StreamExt;
 
 mod routes;
 
