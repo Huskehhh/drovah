@@ -623,6 +623,7 @@ mod tests {
 
     use super::*;
 
+    #[tokio::main]
     pub async fn setup_database() -> Database {
         let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
         let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
@@ -652,7 +653,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_latest_build_status() {
-        let db = setup_database().await;
+        let db = setup_database();
 
         let status = get_latest_build_status("drovah", &db).await;
 
@@ -672,7 +673,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_project_data() {
-        let db = setup_database().await;
+        let db = setup_database();
 
         let project_data = get_project_data("drovah", &db).await;
 
@@ -685,7 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_build_number() {
-        let db = setup_database().await;
+        let db = setup_database();
 
         let build_num = get_current_build_number("drovah", &db).await;
 
