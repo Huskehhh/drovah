@@ -180,6 +180,16 @@ pub(crate) async fn get_latest_file(
     let path_str = format!("data/archive/{}/{}/", &project, build_number);
     let path = Path::new(&path_str);
 
+    let dir = fs::read_dir(path)?;
+
+    for file in dir {
+        if let Ok(unwrapped) = file {
+            if !unwrapped.path().extension().unwrap().eq("log") {
+                return actix_web::Result::Ok(NamedFile::open(unwrapped.path())?);
+            }
+        }
+    }
+
     let file = NamedFile::open(fs::read_dir(path)?.last().unwrap()?.path())?;
 
     actix_web::Result::Ok(file)
