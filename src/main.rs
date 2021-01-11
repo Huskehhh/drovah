@@ -28,12 +28,10 @@ async fn main() -> io::Result<()> {
     }
 
     if !path.exists() {
-        let default_file = r#"[web]
-address = "127.0.0.1:8000"
-
-[mongo]
-mongo_connection_string = "mongodb://localhost:27017"
-mongo_db = "drovah""#;
+        let default_file = r#"
+        address = "127.0.0.1:8000"
+        mysql_connection_string = "mysql://user:pass@localhost:3306/dbname"
+        "#;
 
         if let Err(e) = fs::write(path, default_file) {
             eprintln!("Error creating default drovah.toml file! {}", e);
