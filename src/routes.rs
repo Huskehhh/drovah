@@ -85,7 +85,7 @@ pub(crate) async fn get_status_badge_for_build(
 ) -> HttpResponse {
     let inner = path.into_inner();
     let project = inner.0;
-    let build = inner.1 - 1;
+    let build = inner.1;
     let project_id = database.get_project_id(&project).await;
 
     let status = database.get_status_for_build(project_id, build).await;

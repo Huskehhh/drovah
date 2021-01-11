@@ -53,7 +53,7 @@ pub struct ProjectData {
 pub struct BuildData {
     build_number: i32,
     build_status: String,
-    archived_files: Option<Vec<String>>,
+    archived_files: Vec<String>,
 }
 
 /// Represents project build configuration (.drovah)
@@ -86,21 +86,8 @@ struct PostArchiveConfig {
 /// Represents the configuration of drovah (drovah.toml)
 #[derive(Debug, Deserialize)]
 struct DrovahConfig {
-    web: WebServerConfig,
-    mysql_connection_string: String,
-}
-
-/// Represents the mongo section of drovah.toml
-#[derive(Debug, Deserialize)]
-struct MongoConfig {
-    mongo_connection_string: String,
-    mongo_db: String,
-}
-
-/// Represents the web section of drovah.toml
-#[derive(Debug, Deserialize)]
-struct WebServerConfig {
     address: String,
+    mysql_connection_string: String,
 }
 
 pub fn verify_authentication_header(
@@ -523,7 +510,7 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(actix_files::Files::new("/", "static/dist/").show_files_listing())
             .wrap(Logger::default())
     })
-    .bind(drovah_config.web.address)?
+    .bind(drovah_config.address)?
     .run()
     .await
 }

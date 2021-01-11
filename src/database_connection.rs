@@ -54,7 +54,7 @@ impl MySQLConnection {
     /// Gets the project id of given project
     pub async fn get_project_id(&self, project: &str) -> i32 {
         self.query_first_i32(&format!(
-            "SELECT `project_id` FROM `projects` WHERE `project` = '{}';",
+            "SELECT `project_id` FROM `projects` WHERE `project_name` = '{}';",
             project
         ))
         .await
@@ -63,7 +63,7 @@ impl MySQLConnection {
     /// Gets the project name of a given project id
     pub async fn get_project_name(&self, project_id: i32) -> String {
         self.query_first_str(&format!(
-            "SELECT `project` FROM `projects` WHERE `project_id` = '{}';",
+            "SELECT `project_name` FROM `projects` WHERE `project_id` = '{}';",
             project_id
         ))
         .await
@@ -71,13 +71,13 @@ impl MySQLConnection {
 
     /// Gets the latest build number of a given project
     pub async fn get_build_number(&self, project_id: i32) -> i32 {
-        self.query_first_i32(&format!("SELECT * FROM `builds` WHERE `project_id` = '{}' ORDER BY `project_id` DESC LIMIT 0, 1;", project_id)).await
+        self.query_first_i32(&format!("SELECT `build_number` FROM `builds` WHERE `project_id` = '{}' ORDER BY `build_number` DESC LIMIT 0, 1;", project_id)).await
     }
 
     /// Retrieves the latest build status for a given project
     pub async fn get_latest_build_status(&self, project_id: i32) -> String {
         self.query_first_str(&format!(
-            "SELECT `status` FROM `builds` WHERE project_id = '{}' AND `branch` = 'master' ORDER BY id DESC LIMIT 0, 1;",
+            "SELECT `status` FROM `builds` WHERE project_id = '{}' AND `branch` = 'master' ORDER BY `build_number` DESC LIMIT 0, 1;",
             project_id
         ))
     .await
@@ -104,15 +104,15 @@ impl MySQLConnection {
 
         let result = conn
             .query_map(&build_query, |(status, files, build_number)| {
-                let files: String = files;
-                let split_files = files
+                let the_files: String = files;
+                let split_files = the_files
                     .split_terminator(", ")
                     .map(|s| s.to_owned())
                     .collect::<Vec<String>>();
                 BuildData {
                     build_number,
                     build_status: status,
-                    archived_files: Some(split_files),
+                    archived_files: split_files,
                 }
             })
             .unwrap();
