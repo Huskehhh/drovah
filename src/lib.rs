@@ -13,13 +13,8 @@ use std::{env, fs, io};
 use actix_web::middleware::Logger;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
-use futures::executor::block_on;
-use futures::StreamExt;
+use database_connection::MySQLConnection;
 use hmac::{Hmac, Mac, NewMac};
-use mongodb::{
-    bson::{doc, Bson},
-    Client, Database,
-};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 
@@ -28,6 +23,7 @@ use crate::routes::{
     get_status_badge_for_build, github_webhook, index,
 };
 
+mod database_connection;
 mod routes;
 
 type HmacSha1 = Hmac<Sha1>;
@@ -45,16 +41,16 @@ struct RepositoryData {
 }
 
 /// Represents data to be provided through 'get_project_information'
-#[derive(Debug, Serialize, Deserialize)]
-struct ProjectData {
+#[derive(Debug, Serialize)]
+pub struct ProjectData {
     project: String,
     builds: Vec<BuildData>,
 }
 
 /// Represents stored build data
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct BuildData {
+pub struct BuildData {
     build_number: i32,
     build_status: String,
     archived_files: Option<Vec<String>>,
@@ -91,7 +87,7 @@ struct PostArchiveConfig {
 #[derive(Debug, Deserialize)]
 struct DrovahConfig {
     web: WebServerConfig,
-    mongo: MongoConfig,
+    mysql_connection_string: String,
 }
 
 /// Represents the mongo section of drovah.toml
@@ -199,10 +195,12 @@ fn get_signature_header(headers: &HashMap<String, String>) -> Result<String, Htt
 
 /// Method to run a build for a project
 /// Takes the project name (String) and ref to database (&Database) to store result
-async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn Error>> {
+async fn run_build(project: String, database: &MySQLConnection) -> Result<(), Box<dyn Error>> {
     println!("Building '{}'", project);
     let project_path = format!("data/projects/{}", project);
     let path = Path::new(&project_path);
+
+    let project_id = database.get_project_id(&project).await;
 
     if path.exists() && path.is_dir() {
         let settings_file_path = format!("{}/.drovah", project_path);
@@ -218,7 +216,8 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
             println!("Success! '{}' has been built.", project);
 
             if let Some(files) = ci_config.archive {
-                if archive_files(files.files, &project, database, files.append_buildnumber).await {
+                if archive_files(files.files, project_id, database, files.append_buildnumber).await
+                {
                     println!("Successfully archived files for '{}'", project);
 
                     if let Some(post_archive) = ci_config.postarchive {
@@ -235,11 +234,11 @@ async fn run_build(project: String, database: &Database) -> Result<(), Box<dyn E
                     println!("Failed to archive files for '{}'", project);
                 }
             } else {
-                save_project_build_data(project, "passing".to_owned(), database, None).await;
+                save_project_build_data(project, "passing".to_owned(), database, vec![]).await;
             }
         } else {
             println!("'{}' has failed to build.", project);
-            save_project_build_data(project, "failing".to_owned(), database, None).await;
+            save_project_build_data(project, "failing".to_owned(), database, vec![]).await;
         }
     }
     Ok(())
@@ -297,11 +296,12 @@ fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool 
 /// Files are stored in 'data/archive/<project>/<build number>/
 async fn archive_files(
     files_to_archive: Vec<String>,
-    project: &str,
-    database: &Database,
+    project_id: i32,
+    database: &MySQLConnection,
     append_buildnumber: Option<bool>,
 ) -> bool {
-    let archive_folder = format!("data/archive/{}/", project);
+    let project_name = database.get_project_name(project_id).await;
+    let archive_folder = format!("data/archive/{}/", project_name);
     let archive_path = Path::new(&archive_folder);
     if !archive_path.exists() {
         if let Err(e) = fs::create_dir_all(archive_path) {
@@ -309,7 +309,8 @@ async fn archive_files(
         }
     }
 
-    let mut build_number = get_current_build_number(project, database).await;
+    let mut build_number = database.get_build_number(project_id).await;
+
     // If build number is not one, we need to increment it
     if build_number != 1 {
         build_number += 1;
@@ -319,26 +320,26 @@ async fn archive_files(
     let mut filenames = vec![];
 
     // Copy log file
-    let from = format!("data/projects/{}/build.log", project);
-    let to = format!("data/archive/{}/{}/build.log", project, build_number);
+    let from = format!("data/projects/{}/build.log", project_name);
+    let to = format!("data/archive/{}/{}/build.log", project_name, build_number);
     if copy(&from, &to) {
         filenames.push("build.log".to_owned());
         if let Err(e) = fs::remove_file(Path::new(&from)) {
             eprintln!(
                 "Error when deleting build.log for project: {}, {}",
-                project, e
+                project_name, e
             );
         }
     } else {
         println!(
             "Error copying build.log for {} with build number: {}",
-            project, build_number
+            project_name, build_number
         );
     }
 
     // Copy other files
     for file_to_match in files_to_archive {
-        let path_to_search = format!("data/projects/{}/{}", project, file_to_match);
+        let path_to_search = format!("data/projects/{}/{}", project_name, file_to_match);
         if let Some(matched) = match_filename_to_file(&path_to_search) {
             let matched_file_name = matched.split('/').last().unwrap();
 
@@ -353,7 +354,10 @@ async fn archive_files(
                     let filename = matched_file_name.replace(&replace, "");
                     let final_file = format!("{}-b{}.{}", filename, build_number, ext);
 
-                    let to = format!("data/archive/{}/{}/{}", project, build_number, final_file);
+                    let to = format!(
+                        "data/archive/{}/{}/{}",
+                        project_name, build_number, final_file
+                    );
 
                     if copy(&matched, &to) {
                         filenames.push(final_file.to_owned());
@@ -363,7 +367,7 @@ async fn archive_files(
             } else {
                 let to = format!(
                     "data/archive/{}/{}/{}",
-                    project, build_number, matched_file_name
+                    project_name, build_number, matched_file_name
                 );
 
                 if copy(&matched, &to) {
@@ -376,24 +380,15 @@ async fn archive_files(
 
     if success {
         save_project_build_data(
-            project.to_owned(),
+            project_name.to_owned(),
             "passing".to_owned(),
             database,
-            Some(filenames),
+            filenames,
         )
         .await;
     }
 
     success
-}
-
-/// Returns the current build number of given project
-/// Defaults at 1
-async fn get_current_build_number(project: &str, database: &Database) -> i32 {
-    if let Some(project_data) = get_project_data(project, database).await {
-        return project_data.builds.len() as i32;
-    }
-    1
 }
 
 /// Matches a filename into a file
@@ -451,78 +446,21 @@ fn copy(from_str: &str, to_str: &str) -> bool {
     true
 }
 
-/// Returns project data struct optionally
-async fn get_project_data(project: &str, database: &Database) -> Option<ProjectData> {
-    let collection = database.collection("project_data");
-
-    let document = doc! { "project": &project };
-
-    if let Ok(mut cursor) = collection.find(document, None).await {
-        while let Some(doc_result) = cursor.next().await {
-            if let Ok(document) = doc_result {
-                let project_data: ProjectData = bson::from_bson(Bson::Document(document)).unwrap();
-                return Some(project_data);
-            }
-        }
-    }
-    None
-}
-
 /// Saves project build data to database
 async fn save_project_build_data(
     project: String,
     status: String,
-    database: &Database,
-    archived_files: Option<Vec<String>>,
+    database: &MySQLConnection,
+    archived_files: Vec<String>,
 ) {
-    let collection = database.collection("project_data");
-    let project_data = get_project_data(&project, database).await;
+    let project_id = database.get_project_id(&project).await;
+    let build_number = database.get_build_number(project_id).await + 1;
+    let files = archived_files.join(", ");
 
-    // Currently has data, lets replace rather than add new
-    if project_data.is_some() {
-        let mut project_data = project_data.unwrap();
+    let insert = format!("INSERT INTO `builds` (`project_id`, `build_number`, `branch`, `files`, `build_timestamp`, `status`) VALUES ('{}', '{}', 'master', '{}', current_timestamp(), '{}');",
+    project_id, build_number, files, status);
 
-        let build_data = BuildData {
-            build_number: project_data.builds.len() as i32 + 1,
-            build_status: status,
-            archived_files,
-        };
-
-        // Add this build to the list
-        project_data.builds.push(build_data);
-
-        let serialised = bson::to_bson(&project_data).unwrap();
-        let document = serialised.as_document().unwrap().clone();
-
-        let filter = doc! { "project": &project };
-
-        if let Err(e) = collection.update_one(filter, document, None).await {
-            eprintln!(
-                "Error updating document for project {}, error: {:#?}",
-                project, e
-            );
-        }
-    } else {
-        let build_data = BuildData {
-            build_number: 1,
-            build_status: status,
-            archived_files,
-        };
-        let project_data: ProjectData = ProjectData {
-            project,
-            builds: vec![build_data],
-        };
-
-        let serialised = bson::to_bson(&project_data).unwrap();
-        let document = serialised.as_document().unwrap().clone();
-
-        if let Err(e) = collection.insert_one(document, None).await {
-            eprintln!(
-                "Error adding document for project {}, error: {:#?}",
-                project_data.project, e
-            );
-        }
-    }
+    database.execute_update(&insert).await;
 }
 
 /// Returns status badge for given status
@@ -551,31 +489,6 @@ async fn get_project_status_badge(status: String) -> String {
     "".to_owned()
 }
 
-/// Retrieves the latest build status for a given project
-async fn get_latest_build_status(project: &str, database: &Database) -> Option<String> {
-    let collection = database.collection("project_data");
-
-    let document = doc! { "project": & project };
-
-    if let Ok(mut cursor) = collection.find(document, None).await {
-        while let Some(doc_result) = cursor.next().await {
-            if let Ok(document) = doc_result {
-                if let Some(builds) = document.get("builds").and_then(Bson::as_array) {
-                    if let Some(last) = builds.last().and_then(Bson::as_document) {
-                        if let Some(latest_build_status) =
-                            last.get("buildStatus").and_then(Bson::as_str)
-                        {
-                            return Some(String::from(latest_build_status));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
 /// Launches the actix webserver
 /// Takes configuration from drovah.toml
 pub async fn launch_webserver() -> io::Result<()> {
@@ -587,13 +500,11 @@ pub async fn launch_webserver() -> io::Result<()> {
 
     HttpServer::new(move || {
         let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-        let client_future = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string);
-        let client = block_on(client_future).unwrap();
-        let database = client.database(&drovah_config.mongo.mongo_db);
+        let mysql = MySQLConnection::new(&drovah_config.mysql_connection_string);
 
         // Create app
         App::new()
-            .data(database)
+            .data(mysql)
             .wrap(middleware::Logger::default())
             .service(
                 web::resource("/{project}/badge").route(web::get().to(get_latest_status_badge)),
@@ -621,15 +532,14 @@ pub async fn launch_webserver() -> io::Result<()> {
 mod tests {
     use std::ffi::OsStr;
 
+    use database_connection::MySQLConnection;
+
     use super::*;
 
-    pub async fn setup_database() -> Database {
+    pub async fn setup_database() -> MySQLConnection {
         let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
         let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-        let client = Client::with_uri_str(&drovah_config.mongo.mongo_connection_string)
-            .await
-            .unwrap();
-        client.database(&drovah_config.mongo.mongo_db)
+        MySQLConnection::new(&drovah_config.mysql_connection_string)
     }
 
     #[test]
@@ -648,48 +558,6 @@ mod tests {
 
         assert!(path.is_some());
         assert_eq!(path.unwrap(), String::from("./.drovah"));
-    }
-
-    #[tokio::test]
-    async fn test_latest_build_status() {
-        let db = setup_database().await;
-
-        let status = get_latest_build_status("drovah", &db).await;
-
-        assert!(status.is_some());
-
-        let status = get_latest_build_status("something_completely_abstract", &db).await;
-
-        assert!(status.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_get_status_badge() {
-        let status_badge = get_project_status_badge("passing".to_owned()).await;
-
-        assert_ne!(status_badge, "".to_owned());
-    }
-
-    #[tokio::test]
-    async fn test_get_project_data() {
-        let db = setup_database().await;
-
-        let project_data = get_project_data("drovah", &db).await;
-
-        assert!(project_data.is_some());
-
-        let project_data = get_project_data("something_absurd", &db).await;
-
-        assert!(project_data.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_get_build_number() {
-        let db = setup_database().await;
-
-        let build_num = get_current_build_number("drovah", &db).await;
-
-        assert_ne!(build_num, 1);
     }
 
     #[test]

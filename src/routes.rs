@@ -10,12 +10,11 @@ use actix_web::http::header::HeaderMap;
 use actix_web::http::StatusCode;
 use actix_web::web::Data;
 use actix_web::{web, HttpResponse};
-use mongodb::Database;
 use serde_json::json;
 
 use crate::{
-    get_current_build_number, get_latest_build_status, get_project_data, get_project_status_badge,
-    run_build, run_commands, verify_authentication_header, WebhookData,
+    database_connection::MySQLConnection, get_project_status_badge, run_build, run_commands,
+    verify_authentication_header, WebhookData,
 };
 
 /// Returns specific file
@@ -38,7 +37,7 @@ pub(crate) async fn get_file_for_build(
 /// Returns project information for current path
 /// URL is <host>:<port>/api/projects
 pub(crate) async fn get_project_information(
-    database: Data<Database>,
+    database: Data<MySQLConnection>,
 ) -> actix_web::Result<HttpResponse> {
     let dir = Path::new("data/projects/");
 
@@ -48,11 +47,9 @@ pub(crate) async fn get_project_information(
         let path = entry.path();
         if path.is_dir() {
             if let Ok(file_name) = entry.file_name().into_string() {
-                let optional_project_data = get_project_data(&file_name, &database).await;
-
-                if let Some(project_data) = optional_project_data {
-                    projects.push(project_data);
-                }
+                let project_id = database.get_project_id(&file_name).await;
+                let project_data = database.get_project_data(project_id).await;
+                projects.push(project_data);
             }
         }
     }
@@ -66,16 +63,15 @@ pub(crate) async fn get_project_information(
 /// URL is <host>:<port>/<project>/badge
 pub(crate) async fn get_latest_status_badge(
     project: web::Path<(String,)>,
-    database: Data<Database>,
+    database: Data<MySQLConnection>,
 ) -> HttpResponse {
-    let latest_status = get_latest_build_status(&project.into_inner().0, &database).await;
+    let project_id = database.get_project_id(&project.into_inner().0).await;
+    let latest_status = database.get_latest_build_status(project_id).await;
 
-    if let Some(status) = latest_status {
-        let badge = get_project_status_badge(status).await;
+    let badge = get_project_status_badge(latest_status).await;
 
-        if !badge.is_empty() {
-            return HttpResponse::Ok().content_type("image/svg+xml").body(badge);
-        }
+    if !badge.is_empty() {
+        return HttpResponse::Ok().content_type("image/svg+xml").body(badge);
     }
 
     HttpResponse::NotFound().finish()
@@ -85,25 +81,20 @@ pub(crate) async fn get_latest_status_badge(
 /// URL is <host>:<port>/<project>/<build>/badge
 pub(crate) async fn get_status_badge_for_build(
     path: web::Path<(String, i32)>,
-    database: Data<Database>,
+    database: Data<MySQLConnection>,
 ) -> HttpResponse {
     let inner = path.into_inner();
     let project = inner.0;
     let build = inner.1 - 1;
+    let project_id = database.get_project_id(&project).await;
 
-    if let Some(project_data) = get_project_data(&project, &database).await {
-        let build_info_optional = project_data.builds.get(build as usize);
+    let status = database.get_status_for_build(project_id, build).await;
+    let status_badge = get_project_status_badge(status).await;
 
-        if let Some(build_info) = build_info_optional {
-            let status = build_info.build_status.clone();
-            let status_badge = get_project_status_badge(status).await;
-
-            if !status_badge.is_empty() {
-                return HttpResponse::Ok()
-                    .content_type("image/svg+xml")
-                    .body(status_badge);
-            }
-        }
+    if !status_badge.is_empty() {
+        return HttpResponse::Ok()
+            .content_type("image/svg+xml")
+            .body(status_badge);
     }
 
     HttpResponse::NotFound().finish()
@@ -114,7 +105,7 @@ pub(crate) async fn get_status_badge_for_build(
 /// however, would support others as long as they adhere to format
 /// URL is <host>:<port>/webhook
 pub(crate) async fn github_webhook(
-    database: Data<Database>,
+    database: Data<MySQLConnection>,
     request: web::HttpRequest,
     body: web::Bytes,
 ) -> actix_web::Result<HttpResponse> {
@@ -172,10 +163,12 @@ fn get_headers_hash_map(map: &HeaderMap) -> Result<HashMap<String, String>, Http
 /// <host>:<port>/<project>/latest
 pub(crate) async fn get_latest_file(
     project: web::Path<(String,)>,
-    database: Data<Database>,
+    database: Data<MySQLConnection>,
 ) -> actix_web::Result<NamedFile> {
     let project = project.into_inner().0;
-    let build_number = get_current_build_number(&project, &database).await;
+    let project_id = database.get_project_id(&project).await;
+
+    let build_number = database.get_build_number(project_id).await;
 
     let path_str = format!("data/archive/{}/{}/", &project, build_number);
     let path = Path::new(&path_str);
