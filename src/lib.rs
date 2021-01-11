@@ -519,15 +519,7 @@ pub async fn launch_webserver() -> io::Result<()> {
 mod tests {
     use std::ffi::OsStr;
 
-    use database_connection::MySQLConnection;
-
     use super::*;
-
-    pub async fn setup_database() -> MySQLConnection {
-        let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
-        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-        MySQLConnection::new(&drovah_config.mysql_connection_string)
-    }
 
     #[test]
     fn test_file_matching() {
