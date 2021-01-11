@@ -443,7 +443,13 @@ async fn save_project_build_data(
     archived_files: Vec<String>,
 ) {
     let project_id = database.get_project_id(&project).await;
-    let build_number = database.get_build_number(project_id).await + 1;
+    let mut build_number = database.get_build_number(project_id).await;
+
+    // Increment if build number is greater than 1
+    if build_number < 1 {
+        build_number += 1;
+    }
+
     let files = archived_files.join(", ");
 
     let insert = format!("INSERT INTO `builds` (`project_id`, `build_number`, `branch`, `files`, `build_timestamp`, `status`) VALUES ('{}', '{}', 'master', '{}', current_timestamp(), '{}');",
