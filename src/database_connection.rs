@@ -83,6 +83,7 @@ impl MySQLConnection {
     .await
     }
 
+    /// Retrieves the status for a given build number
     pub async fn get_status_for_build(&self, project_id: i32, build_number: i32) -> String {
         let query = format!(
             "SELECT `status` FROM `builds` WHERE `project_id` = '{}' AND `build_number` = '{}';",
@@ -92,6 +93,7 @@ impl MySQLConnection {
         self.query_first_str(&query).await
     }
 
+    /// Retrieves the data of a project in ProjectData format
     pub async fn get_project_data(&self, project_id: i32) -> ProjectData {
         let build_query = format!(
             "SELECT `status`, `files`, `build_number` from `builds` WHERE `project_id` = '{}';",

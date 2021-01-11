@@ -90,6 +90,7 @@ struct DrovahConfig {
     mysql_connection_string: String,
 }
 
+/// Verifies the auth header for the commit via webhook
 pub fn verify_authentication_header(
     headers: &HashMap<String, String>,
     body: &[u8],
@@ -231,6 +232,7 @@ async fn run_build(project: String, database: &MySQLConnection) -> Result<(), Bo
     Ok(())
 }
 
+/// Runs the commands required for the build in .drovah
 fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool {
     let mut success = 0;
 
