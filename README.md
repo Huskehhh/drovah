@@ -45,17 +45,17 @@ For production use, I recommend binding drovah to localhost and creating a rever
 A ``drovah.toml`` file will be created automatically, and will contain the following:
 
 ```toml
-[web]
 address = "127.0.0.1:8000"
-
-[mysql]
-mongo_connection_string = "mysql://user:pass@localhost:3306"
+mysql_connection_string = "mysql://user:pass@localhost:3306"
 ```
 
 ``address`` is used to specify the ip and port to bind the webserver to
 
-``mongo_connection_string`` is used to specify the connection string for your mongodb server
-``mongo_db`` is used to specify the database to use to store data in
+``mysql_connection_string`` is used to specify the connection string for your mysql server
+
+#### MySQL setup
+
+Please refer to the ``drovah.sql``, and import the structure to your database dedicated to drovah!
 
 ### In your project
 
