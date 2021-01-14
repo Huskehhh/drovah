@@ -166,12 +166,7 @@ fn archive_files(
             }
         }
 
-        let mut build_number = get_build_number(&database, project_id);
-
-        // If build number is not one, we need to increment it
-        if build_number >= 1 {
-            build_number += 1;
-        }
+        let build_number = get_build_number(&database, project_id) + 1;
 
         let mut filenames = vec![];
 
@@ -298,11 +293,7 @@ fn save_project_build_data(
 ) {
     let p_id = get_project_id(&database, &project);
     if let Some(p_id) = p_id {
-        let mut build_num = get_build_number(&database, p_id);
-
-        if build_num >= 1 {
-            build_num += 1;
-        }
+        let build_num = get_build_number(&database, p_id) + 1;
 
         let sep_files = archived_files.join(", ");
 
