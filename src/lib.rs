@@ -1,30 +1,38 @@
 extern crate actix_files;
 extern crate actix_web;
 extern crate env_logger;
+#[macro_use]
+extern crate diesel;
 
-use std::collections::HashMap;
-use std::error::Error;
-use std::ffi::OsStr;
-use std::fs::File;
-use std::path::Path;
 use std::process::{Command, Stdio};
-use std::{env, fs, io};
+use std::{collections::HashMap, ffi::OsStr};
+use std::{env, fs};
+use std::{fs::File, io, path::Path};
 
-use actix_web::middleware::Logger;
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
+use diesel::{insert_into, prelude::*};
+
+use actix_web::{
+    middleware::{self, Logger},
+    web, App, HttpResponse, HttpServer,
+};
 use badge::{Badge, BadgeOptions};
-use database_connection::MySQLConnection;
+use diesel::MysqlConnection;
 use hmac::{Hmac, Mac, NewMac};
-use serde::{Deserialize, Serialize};
-use sha1::Sha1;
-
-use crate::routes::{
+use models::{Build, Project};
+use routes::{
     get_file_for_build, get_latest_file, get_latest_status_badge, get_project_information,
     get_status_badge_for_build, github_webhook, index,
 };
+use serde::{Deserialize, Serialize};
+use sha1::Sha1;
+use std::error::Error;
 
-mod database_connection;
+use crate::schema::builds::dsl as build;
+use crate::schema::projects::dsl as proj;
+
+pub mod models;
 mod routes;
+pub mod schema;
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -83,11 +91,237 @@ struct PostArchiveConfig {
     commands: Vec<String>,
 }
 
-/// Represents the configuration of drovah (drovah.toml)
-#[derive(Debug, Deserialize)]
-struct DrovahConfig {
-    address: String,
-    mysql_connection_string: String,
+/// Method to run a build for a project
+/// Takes the project name (String) and ref to database (&Database) to store result
+fn run_build(project: String, database: &MysqlConnection) -> Result<(), Box<dyn Error>> {
+    println!("Building '{}'", project);
+    let project_path = format!("data/projects/{}", project);
+    let path = Path::new(&project_path);
+
+    let project_id = get_project_id(database, &project);
+
+    if path.exists() && path.is_dir() {
+        let settings_file_path = format!("{}/.drovah", project_path);
+        let ci_settings_file = Path::new(&settings_file_path);
+        let settings_string = fs::read_to_string(ci_settings_file)?;
+        let ci_config: CIConfig = toml::from_str(&settings_string)?;
+
+        if run_commands(
+            ci_config.build.commands,
+            &project_path,
+            ci_config.archive.is_some(),
+        ) {
+            println!("Success! '{}' has been built.", project);
+
+            if let Some(files) = ci_config.archive {
+                if archive_files(
+                    files.files,
+                    project_id.unwrap(),
+                    database,
+                    files.append_buildnumber,
+                ) {
+                    println!("Successfully archived files for '{}'", project);
+
+                    if let Some(post_archive) = ci_config.postarchive {
+                        if run_commands(post_archive.commands, &project_path, false) {
+                            println!("Successfully ran post-archive commands for '{}'", project);
+                        } else {
+                            println!(
+                                "Error occurred running post-archive commands for '{}'",
+                                project
+                            );
+                        }
+                    }
+                } else {
+                    println!("Failed to archive files for '{}'", project);
+                }
+            } else {
+                save_project_build_data(project, "passing".to_owned(), database, vec![]);
+            }
+        } else {
+            println!("'{}' has failed to build.", project);
+            save_project_build_data(project, "failing".to_owned(), database, vec![]);
+        }
+    }
+    Ok(())
+}
+
+/// Archives nominated files for a project
+/// Files are stored in 'data/archive/<project>/<build number>/
+fn archive_files(
+    files_to_archive: Vec<String>,
+    project_id: i32,
+    database: &MysqlConnection,
+    append_buildnumber: Option<bool>,
+) -> bool {
+    let project_name = get_project_name(&database, project_id);
+    let mut success = false;
+
+    if let Some(project_name) = project_name {
+        let archive_folder = format!("data/archive/{}/", project_name);
+        let archive_path = Path::new(&archive_folder);
+        if !archive_path.exists() {
+            if let Err(e) = fs::create_dir_all(archive_path) {
+                eprintln!("Error creating directories: {}, {}", archive_folder, e);
+            }
+        }
+
+        let mut build_number = get_build_number(&database, project_id);
+
+        // If build number is not one, we need to increment it
+        if build_number >= 1 {
+            build_number += 1;
+        }
+
+        let mut filenames = vec![];
+
+        // Copy log file
+        let from = format!("data/projects/{}/build.log", project_name);
+        let to = format!("data/archive/{}/{}/build.log", project_name, build_number);
+        if copy(&from, &to) {
+            filenames.push("build.log".to_owned());
+            if let Err(e) = fs::remove_file(Path::new(&from)) {
+                eprintln!(
+                    "Error when deleting build.log for project: {}, {}",
+                    project_name, e
+                );
+            }
+        } else {
+            println!(
+                "Error copying build.log for {} with build number: {}",
+                project_name, build_number
+            );
+        }
+
+        // Copy other files
+        for file_to_match in files_to_archive {
+            let path_to_search = format!("data/projects/{}/{}", project_name, file_to_match);
+            if let Some(matched) = match_filename_to_file(&path_to_search) {
+                let matched_file_name = matched.split('/').last().unwrap();
+
+                if append_buildnumber.is_some() {
+                    if append_buildnumber.unwrap() {
+                        let ext = Path::new(matched_file_name)
+                            .extension()
+                            .and_then(OsStr::to_str)
+                            .unwrap();
+
+                        let replace = format!(".{}", ext);
+                        let filename = matched_file_name.replace(&replace, "");
+                        let final_file = format!("{}-b{}.{}", filename, build_number, ext);
+
+                        let to = format!(
+                            "data/archive/{}/{}/{}",
+                            project_name, build_number, final_file
+                        );
+
+                        if copy(&matched, &to) {
+                            filenames.push(final_file.to_owned());
+                            success = true;
+                        }
+                    }
+                } else {
+                    let to = format!(
+                        "data/archive/{}/{}/{}",
+                        project_name, build_number, matched_file_name
+                    );
+
+                    if copy(&matched, &to) {
+                        filenames.push(matched_file_name.to_owned());
+                        success = true;
+                    }
+                }
+            }
+        }
+
+        if success {
+            save_project_build_data(
+                project_name.to_owned(),
+                "passing".to_owned(),
+                database,
+                filenames,
+            );
+        }
+    }
+
+    success
+}
+
+pub fn create_connection() -> MysqlConnection {
+    let db_url = env::var("DATABASE_URL").expect("No DATABASE_URL environment variable defined!");
+    MysqlConnection::establish(&db_url).expect("Error when trying to connect to database")
+}
+
+/// Launches the actix webserver
+/// Takes configuration from drovah.toml
+pub async fn launch_webserver() -> io::Result<()> {
+    std::env::set_var("RUST_LOG", "actix_web=info");
+    env_logger::init();
+
+    let bind_address = env::var("BIND_ADDRESS").unwrap_or("127.0.0.1:8000".to_owned());
+
+    HttpServer::new(move || {
+        let mysql = create_connection();
+
+        // Create app
+        App::new()
+            .data(mysql)
+            .wrap(middleware::Logger::default())
+            .service(
+                web::resource("/{project}/badge").route(web::get().to(get_latest_status_badge)),
+            )
+            .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
+            .service(
+                web::resource("/{project}/{build}/badge")
+                    .route(web::get().to(get_status_badge_for_build)),
+            )
+            .service(
+                web::resource("/{project}/{build}/{file}").route(web::get().to(get_file_for_build)),
+            )
+            .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
+            .service(web::resource("/webhook").route(web::post().to(github_webhook)))
+            .service(web::resource("/").route(web::get().to(index)))
+            .service(actix_files::Files::new("/", "static/dist/").show_files_listing())
+            .wrap(Logger::default())
+    })
+    .bind(bind_address)?
+    .run()
+    .await
+}
+
+/// Saves project build data to database
+fn save_project_build_data(
+    project: String,
+    status: String,
+    database: &MysqlConnection,
+    archived_files: Vec<String>,
+) {
+    let p_id = get_project_id(&database, &project);
+    if let Some(p_id) = p_id {
+        let mut build_num = get_build_number(&database, p_id);
+
+        if build_num >= 1 {
+            build_num += 1;
+        }
+
+        let sep_files = archived_files.join(", ");
+
+        if let Err(why) = insert_into(build::builds)
+            .values((
+                build::project_id.eq(p_id),
+                build::build_number.eq(build_num),
+                build::branch.eq("master".to_owned()),
+                build::files.eq(sep_files),
+                build::status.eq(status),
+            ))
+            .execute(database)
+        {
+            eprintln!(
+                "Error on insert of build {} for {}! {}",
+                build_num, project, why
+            )
+        }
+    }
 }
 
 /// Verifies the auth header for the commit via webhook
@@ -181,57 +415,6 @@ fn get_signature_header(headers: &HashMap<String, String>) -> Result<String, Htt
     }
 }
 
-/// Method to run a build for a project
-/// Takes the project name (String) and ref to database (&Database) to store result
-async fn run_build(project: String, database: &MySQLConnection) -> Result<(), Box<dyn Error>> {
-    println!("Building '{}'", project);
-    let project_path = format!("data/projects/{}", project);
-    let path = Path::new(&project_path);
-
-    let project_id = database.get_project_id(&project).await;
-
-    if path.exists() && path.is_dir() {
-        let settings_file_path = format!("{}/.drovah", project_path);
-        let ci_settings_file = Path::new(&settings_file_path);
-        let settings_string = fs::read_to_string(ci_settings_file)?;
-        let ci_config: CIConfig = toml::from_str(&settings_string)?;
-
-        if run_commands(
-            ci_config.build.commands,
-            &project_path,
-            ci_config.archive.is_some(),
-        ) {
-            println!("Success! '{}' has been built.", project);
-
-            if let Some(files) = ci_config.archive {
-                if archive_files(files.files, project_id, database, files.append_buildnumber).await
-                {
-                    println!("Successfully archived files for '{}'", project);
-
-                    if let Some(post_archive) = ci_config.postarchive {
-                        if run_commands(post_archive.commands, &project_path, false) {
-                            println!("Successfully ran post-archive commands for '{}'", project);
-                        } else {
-                            println!(
-                                "Error occurred running post-archive commands for '{}'",
-                                project
-                            );
-                        }
-                    }
-                } else {
-                    println!("Failed to archive files for '{}'", project);
-                }
-            } else {
-                save_project_build_data(project, "passing".to_owned(), database, vec![]).await;
-            }
-        } else {
-            println!("'{}' has failed to build.", project);
-            save_project_build_data(project, "failing".to_owned(), database, vec![]).await;
-        }
-    }
-    Ok(())
-}
-
 /// Runs the commands required for the build in .drovah
 fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool {
     let mut success = 0;
@@ -279,105 +462,6 @@ fn run_commands(commands: Vec<String>, directory: &str, save_log: bool) -> bool 
     }
 
     success as usize == commands_len
-}
-
-/// Archives nominated files for a project
-/// Files are stored in 'data/archive/<project>/<build number>/
-async fn archive_files(
-    files_to_archive: Vec<String>,
-    project_id: i32,
-    database: &MySQLConnection,
-    append_buildnumber: Option<bool>,
-) -> bool {
-    let project_name = database.get_project_name(project_id).await;
-    let archive_folder = format!("data/archive/{}/", project_name);
-    let archive_path = Path::new(&archive_folder);
-    if !archive_path.exists() {
-        if let Err(e) = fs::create_dir_all(archive_path) {
-            eprintln!("Error creating directories: {}, {}", archive_folder, e);
-        }
-    }
-
-    let mut build_number = database.get_build_number(project_id).await;
-
-    // If build number is not one, we need to increment it
-    if build_number != 1 {
-        build_number += 1;
-    }
-
-    let mut success = false;
-    let mut filenames = vec![];
-
-    // Copy log file
-    let from = format!("data/projects/{}/build.log", project_name);
-    let to = format!("data/archive/{}/{}/build.log", project_name, build_number);
-    if copy(&from, &to) {
-        filenames.push("build.log".to_owned());
-        if let Err(e) = fs::remove_file(Path::new(&from)) {
-            eprintln!(
-                "Error when deleting build.log for project: {}, {}",
-                project_name, e
-            );
-        }
-    } else {
-        println!(
-            "Error copying build.log for {} with build number: {}",
-            project_name, build_number
-        );
-    }
-
-    // Copy other files
-    for file_to_match in files_to_archive {
-        let path_to_search = format!("data/projects/{}/{}", project_name, file_to_match);
-        if let Some(matched) = match_filename_to_file(&path_to_search) {
-            let matched_file_name = matched.split('/').last().unwrap();
-
-            if append_buildnumber.is_some() {
-                if append_buildnumber.unwrap() {
-                    let ext = Path::new(matched_file_name)
-                        .extension()
-                        .and_then(OsStr::to_str)
-                        .unwrap();
-
-                    let replace = format!(".{}", ext);
-                    let filename = matched_file_name.replace(&replace, "");
-                    let final_file = format!("{}-b{}.{}", filename, build_number, ext);
-
-                    let to = format!(
-                        "data/archive/{}/{}/{}",
-                        project_name, build_number, final_file
-                    );
-
-                    if copy(&matched, &to) {
-                        filenames.push(final_file.to_owned());
-                        success = true;
-                    }
-                }
-            } else {
-                let to = format!(
-                    "data/archive/{}/{}/{}",
-                    project_name, build_number, matched_file_name
-                );
-
-                if copy(&matched, &to) {
-                    filenames.push(matched_file_name.to_owned());
-                    success = true;
-                }
-            }
-        }
-    }
-
-    if success {
-        save_project_build_data(
-            project_name.to_owned(),
-            "passing".to_owned(),
-            database,
-            filenames,
-        )
-        .await;
-    }
-
-    success
 }
 
 /// Matches a filename into a file
@@ -435,31 +519,8 @@ fn copy(from_str: &str, to_str: &str) -> bool {
     true
 }
 
-/// Saves project build data to database
-async fn save_project_build_data(
-    project: String,
-    status: String,
-    database: &MySQLConnection,
-    archived_files: Vec<String>,
-) {
-    let project_id = database.get_project_id(&project).await;
-    let mut build_number = database.get_build_number(project_id).await;
-
-    // Increment if build number is greater than 1
-    if build_number < 1 {
-        build_number += 1;
-    }
-
-    let files = archived_files.join(", ");
-
-    let insert = format!("INSERT INTO `builds` (`project_id`, `build_number`, `branch`, `files`, `build_timestamp`, `status`) VALUES ('{}', '{}', 'master', '{}', current_timestamp(), '{}');",
-    project_id, build_number, files, status);
-
-    database.execute_update(&insert).await;
-}
-
 /// Returns status badge for given status
-async fn get_project_status_badge(status: String) -> String {
+fn get_project_status_badge(status: String) -> String {
     let mut badge_options: BadgeOptions = Default::default();
 
     if status.eq("passing") {
@@ -484,43 +545,103 @@ async fn get_project_status_badge(status: String) -> String {
     "".to_owned()
 }
 
-/// Launches the actix webserver
-/// Takes configuration from drovah.toml
-pub async fn launch_webserver() -> io::Result<()> {
-    std::env::set_var("RUST_LOG", "actix_web=info");
-    env_logger::init();
+/// Gets the project id of given project
+pub fn get_project_id(connection: &MysqlConnection, project: &str) -> Option<i32> {
+    let result = proj::projects
+        .filter(proj::project_name.eq(project))
+        .limit(1)
+        .load::<Project>(connection)
+        .expect("Error getting project id!");
 
-    let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
-    let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
+    Some(result.first()?.project_id)
+}
 
-    HttpServer::new(move || {
-        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-        let mysql = MySQLConnection::new(&drovah_config.mysql_connection_string);
+/// Gets the project name of a given project id
+pub fn get_project_name(connection: &MysqlConnection, pid: i32) -> Option<String> {
+    let result = proj::projects
+        .filter(proj::project_id.eq(pid))
+        .limit(1)
+        .load::<Project>(connection)
+        .expect("Error getting project name from id!");
 
-        // Create app
-        App::new()
-            .data(mysql)
-            .wrap(middleware::Logger::default())
-            .service(
-                web::resource("/{project}/badge").route(web::get().to(get_latest_status_badge)),
-            )
-            .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
-            .service(
-                web::resource("/{project}/{build}/badge")
-                    .route(web::get().to(get_status_badge_for_build)),
-            )
-            .service(
-                web::resource("/{project}/{build}/{file}").route(web::get().to(get_file_for_build)),
-            )
-            .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
-            .service(web::resource("/webhook").route(web::post().to(github_webhook)))
-            .service(web::resource("/").route(web::get().to(index)))
-            .service(actix_files::Files::new("/", "static/dist/").show_files_listing())
-            .wrap(Logger::default())
+    Some(result.first()?.project_name.to_owned())
+}
+
+/// Gets the latest build number of a given project
+pub fn get_build_number(connection: &MysqlConnection, pid: i32) -> i32 {
+    let result = build::builds
+        .filter(build::project_id.eq(pid))
+        .limit(1)
+        .load::<Build>(connection)
+        .expect("Error getting project name from id!");
+
+    if let Some(first) = result.first() {
+        return first.build_number;
+    } else {
+        return 0;
+    }
+}
+
+/// Retrieves the latest build status for a given project
+pub fn get_latest_build_status(connection: &MysqlConnection, pid: i32) -> String {
+    let result = build::builds
+        .filter(build::project_id.eq(pid))
+        .limit(1)
+        .load::<Build>(connection)
+        .expect("Error getting project name from id!");
+
+    if let Some(first) = result.first() {
+        return first.status.to_owned();
+    } else {
+        return "failing".to_owned();
+    }
+}
+
+/// Retrieves the status for a given build number
+pub fn get_status_for_build(connection: &MysqlConnection, pid: i32, build_num: i32) -> String {
+    let result = build::builds
+        .filter(build::project_id.eq(pid))
+        .filter(build::build_number.eq(build_num))
+        .limit(1)
+        .load::<Build>(connection)
+        .expect("Error getting project name from id!");
+
+    if let Some(first) = result.first() {
+        return first.status.to_owned();
+    } else {
+        return "failing".to_owned();
+    }
+}
+
+/// Retrieves the data of a project in ProjectData format
+pub fn get_project_data(connection: &MysqlConnection, pid: i32) -> Option<ProjectData> {
+    let result = build::builds
+        .filter(build::project_id.eq(pid))
+        .limit(10)
+        .load::<Build>(connection)
+        .expect("Error getting project name from id!");
+
+    let project_name = get_project_name(connection, pid);
+
+    let mut build_data_vec = vec![];
+    for build in result {
+        let split_files = build
+            .files
+            .split_terminator(", ")
+            .map(|s| s.to_owned())
+            .collect::<Vec<String>>();
+
+        build_data_vec.push(BuildData {
+            build_number: build.build_number,
+            build_status: build.status,
+            archived_files: split_files,
+        });
+    }
+
+    Some(ProjectData {
+        project: project_name?,
+        builds: build_data_vec,
     })
-    .bind(drovah_config.address)?
-    .run()
-    .await
 }
 
 #[cfg(test)]

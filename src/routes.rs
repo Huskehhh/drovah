@@ -10,10 +10,12 @@ use actix_web::http::header::HeaderMap;
 use actix_web::http::StatusCode;
 use actix_web::web::Data;
 use actix_web::{web, HttpResponse};
+use diesel::MysqlConnection;
 use serde_json::json;
 
 use crate::{
-    database_connection::MySQLConnection, get_project_status_badge, run_build, run_commands,
+    create_connection, get_build_number, get_latest_build_status, get_project_data, get_project_id,
+    get_project_status_badge, get_status_for_build, run_build, run_commands,
     verify_authentication_header, WebhookData,
 };
 
@@ -37,7 +39,7 @@ pub(crate) async fn get_file_for_build(
 /// Returns project information for current path
 /// URL is <host>:<port>/api/projects
 pub(crate) async fn get_project_information(
-    database: Data<MySQLConnection>,
+    database: Data<MysqlConnection>,
 ) -> actix_web::Result<HttpResponse> {
     let dir = Path::new("data/projects/");
 
@@ -47,9 +49,11 @@ pub(crate) async fn get_project_information(
         let path = entry.path();
         if path.is_dir() {
             if let Ok(file_name) = entry.file_name().into_string() {
-                let project_id = database.get_project_id(&file_name).await;
-                let project_data = database.get_project_data(project_id).await;
-                projects.push(project_data);
+                let project_id = get_project_id(&database, &file_name);
+                if let Some(project_id) = project_id {
+                    let project_data = get_project_data(&database, project_id);
+                    projects.push(project_data);
+                }
             }
         }
     }
@@ -63,15 +67,17 @@ pub(crate) async fn get_project_information(
 /// URL is <host>:<port>/<project>/badge
 pub(crate) async fn get_latest_status_badge(
     project: web::Path<(String,)>,
-    database: Data<MySQLConnection>,
+    database: Data<MysqlConnection>,
 ) -> HttpResponse {
-    let project_id = database.get_project_id(&project.into_inner().0).await;
-    let latest_status = database.get_latest_build_status(project_id).await;
+    let project_id = get_project_id(&database, &project.into_inner().0);
 
-    let badge = get_project_status_badge(latest_status).await;
+    if let Some(project_id) = project_id {
+        let latest_status = get_latest_build_status(&database, project_id);
+        let badge = get_project_status_badge(latest_status);
 
-    if !badge.is_empty() {
-        return HttpResponse::Ok().content_type("image/svg+xml").body(badge);
+        if !badge.is_empty() {
+            return HttpResponse::Ok().content_type("image/svg+xml").body(badge);
+        }
     }
 
     HttpResponse::NotFound().finish()
@@ -81,20 +87,22 @@ pub(crate) async fn get_latest_status_badge(
 /// URL is <host>:<port>/<project>/<build>/badge
 pub(crate) async fn get_status_badge_for_build(
     path: web::Path<(String, i32)>,
-    database: Data<MySQLConnection>,
+    database: Data<MysqlConnection>,
 ) -> HttpResponse {
     let inner = path.into_inner();
     let project = inner.0;
     let build = inner.1;
-    let project_id = database.get_project_id(&project).await;
+    let project_id = get_project_id(&database, &project);
 
-    let status = database.get_status_for_build(project_id, build).await;
-    let status_badge = get_project_status_badge(status).await;
+    if let Some(project_id) = project_id {
+        let status = get_status_for_build(&database, project_id, build);
+        let status_badge = get_project_status_badge(status);
 
-    if !status_badge.is_empty() {
-        return HttpResponse::Ok()
-            .content_type("image/svg+xml")
-            .body(status_badge);
+        if !status_badge.is_empty() {
+            return HttpResponse::Ok()
+                .content_type("image/svg+xml")
+                .body(status_badge);
+        }
     }
 
     HttpResponse::NotFound().finish()
@@ -105,7 +113,6 @@ pub(crate) async fn get_status_badge_for_build(
 /// however, would support others as long as they adhere to format
 /// URL is <host>:<port>/webhook
 pub(crate) async fn github_webhook(
-    database: Data<MySQLConnection>,
     request: web::HttpRequest,
     body: web::Bytes,
 ) -> actix_web::Result<HttpResponse> {
@@ -125,9 +132,15 @@ pub(crate) async fn github_webhook(
             let commands = vec!["git pull".to_owned()];
             run_commands(commands, &project_path, false);
 
-            if let Err(e) = run_build(webhookdata.repository.name.clone(), &database).await {
+            // Hacky fix to run the build async, so we can reply to the web request
+            let database = create_connection();
+
+            if let Err(e) = run_build(webhookdata.repository.name, &database) {
                 eprintln!("Error! {}", e);
             }
+
+            // Hacky fix, drop the database when we finished... theoretically ddos-able but ¯\_(ツ)_/¯ until better idea
+            std::mem::drop(database);
         });
 
         return actix_web::Result::Ok(HttpResponse::NoContent().finish());
@@ -163,12 +176,12 @@ fn get_headers_hash_map(map: &HeaderMap) -> Result<HashMap<String, String>, Http
 /// <host>:<port>/<project>/latest
 pub(crate) async fn get_latest_file(
     project: web::Path<(String,)>,
-    database: Data<MySQLConnection>,
+    database: Data<MysqlConnection>,
 ) -> actix_web::Result<NamedFile> {
     let project = project.into_inner().0;
-    let project_id = database.get_project_id(&project).await;
+    let project_id = get_project_id(&database, &project).unwrap();
 
-    let build_number = database.get_build_number(project_id).await;
+    let build_number = get_build_number(&database, project_id);
 
     let path_str = format!("data/archive/{}/{}/", &project, build_number);
     let path = Path::new(&path_str);

@@ -42,20 +42,24 @@ For production use, I recommend binding drovah to localhost and creating a rever
 
 #### drovah configuration
 
-A ``drovah.toml`` file will be created automatically, and will contain the following:
+You have two _required_ settings to configure, the database and the github secret! Although optionally you can change the bind address
 
-```toml
-address = "127.0.0.1:8000"
-mysql_connection_string = "mysql://user:pass@localhost:3306"
+Simply create a ``.env`` containing the following
+
+```env
+DATABASE_URL=mysql://user:pass@localhost:3306
+GITHUB_SECRET=secretgoeshere
 ```
 
-``address`` is used to specify the ip and port to bind the webserver to
+Note for ``GITHUB_SECRET``, use something like ``ruby -rsecurerandom -e 'puts SecureRandom.hex(20)'`` [to generate the secret](https://docs.github.com/en/free-pro-team@latest/developers/webhooks-and-events/securing-your-webhooks#setting-your-secret-token)
 
-``mysql_connection_string`` is used to specify the connection string for your mysql server
+And if you wish to change the bind address, add ``BIND_ADDRESS=127.0.0.1:8080``
 
 #### MySQL setup
 
-Please refer to the ``drovah.sql``, and import the structure to your database dedicated to drovah!
+1. Install [diesel_cli](https://github.com/diesel-rs/diesel/tree/master/diesel_cli)
+2. Run ``diesel migration run``
+3. Done
 
 ### In your project
 
@@ -94,7 +98,7 @@ commands = ["echo 'woohoo' >> somefile"]
 
 ## Managing projects
 
-Just ``git clone <repo>`` in the ``data/projects/`` folder, and then webhooks will be supported instantly
+Just ``git clone <repo>`` in the ``data/projects/`` folder and insert a project to the ``projects`` table of the database, and then webhooks will be supported instantly
 
 Similarly, just remove the folders you no longer want to track
 
