@@ -114,7 +114,13 @@ async fn run_build(project: String, database: &MysqlConnection) -> Result<(), Bo
             println!("Success! '{}' has been built.", project);
 
             if let Some(files) = ci_config.archive {
-                if archive_files(files.files, project_id, database, files.append_buildnumber).await
+                if archive_files(
+                    files.files,
+                    project_id.unwrap(),
+                    database,
+                    files.append_buildnumber,
+                )
+                .await
                 {
                     println!("Successfully archived files for '{}'", project);
 
@@ -151,91 +157,94 @@ async fn archive_files(
     append_buildnumber: Option<bool>,
 ) -> bool {
     let project_name = get_project_name(&database, project_id);
-    let archive_folder = format!("data/archive/{}/", project_name);
-    let archive_path = Path::new(&archive_folder);
-    if !archive_path.exists() {
-        if let Err(e) = fs::create_dir_all(archive_path) {
-            eprintln!("Error creating directories: {}, {}", archive_folder, e);
-        }
-    }
-
-    let mut build_number = get_build_number(&database, project_id);
-
-    // If build number is not one, we need to increment it
-    if build_number != 1 {
-        build_number += 1;
-    }
-
     let mut success = false;
-    let mut filenames = vec![];
 
-    // Copy log file
-    let from = format!("data/projects/{}/build.log", project_name);
-    let to = format!("data/archive/{}/{}/build.log", project_name, build_number);
-    if copy(&from, &to) {
-        filenames.push("build.log".to_owned());
-        if let Err(e) = fs::remove_file(Path::new(&from)) {
-            eprintln!(
-                "Error when deleting build.log for project: {}, {}",
-                project_name, e
+    if let Some(project_name) = project_name {
+        let archive_folder = format!("data/archive/{}/", project_name);
+        let archive_path = Path::new(&archive_folder);
+        if !archive_path.exists() {
+            if let Err(e) = fs::create_dir_all(archive_path) {
+                eprintln!("Error creating directories: {}, {}", archive_folder, e);
+            }
+        }
+
+        let mut build_number = get_build_number(&database, project_id);
+
+        // If build number is not one, we need to increment it
+        if build_number != 1 {
+            build_number += 1;
+        }
+
+        let mut filenames = vec![];
+
+        // Copy log file
+        let from = format!("data/projects/{}/build.log", project_name);
+        let to = format!("data/archive/{}/{}/build.log", project_name, build_number);
+        if copy(&from, &to) {
+            filenames.push("build.log".to_owned());
+            if let Err(e) = fs::remove_file(Path::new(&from)) {
+                eprintln!(
+                    "Error when deleting build.log for project: {}, {}",
+                    project_name, e
+                );
+            }
+        } else {
+            println!(
+                "Error copying build.log for {} with build number: {}",
+                project_name, build_number
             );
         }
-    } else {
-        println!(
-            "Error copying build.log for {} with build number: {}",
-            project_name, build_number
-        );
-    }
 
-    // Copy other files
-    for file_to_match in files_to_archive {
-        let path_to_search = format!("data/projects/{}/{}", project_name, file_to_match);
-        if let Some(matched) = match_filename_to_file(&path_to_search) {
-            let matched_file_name = matched.split('/').last().unwrap();
+        // Copy other files
+        for file_to_match in files_to_archive {
+            let path_to_search = format!("data/projects/{}/{}", project_name, file_to_match);
+            if let Some(matched) = match_filename_to_file(&path_to_search) {
+                let matched_file_name = matched.split('/').last().unwrap();
 
-            if append_buildnumber.is_some() {
-                if append_buildnumber.unwrap() {
-                    let ext = Path::new(matched_file_name)
-                        .extension()
-                        .and_then(OsStr::to_str)
-                        .unwrap();
+                if append_buildnumber.is_some() {
+                    if append_buildnumber.unwrap() {
+                        let ext = Path::new(matched_file_name)
+                            .extension()
+                            .and_then(OsStr::to_str)
+                            .unwrap();
 
-                    let replace = format!(".{}", ext);
-                    let filename = matched_file_name.replace(&replace, "");
-                    let final_file = format!("{}-b{}.{}", filename, build_number, ext);
+                        let replace = format!(".{}", ext);
+                        let filename = matched_file_name.replace(&replace, "");
+                        let final_file = format!("{}-b{}.{}", filename, build_number, ext);
 
+                        let to = format!(
+                            "data/archive/{}/{}/{}",
+                            project_name, build_number, final_file
+                        );
+
+                        if copy(&matched, &to) {
+                            filenames.push(final_file.to_owned());
+                            success = true;
+                        }
+                    }
+                } else {
                     let to = format!(
                         "data/archive/{}/{}/{}",
-                        project_name, build_number, final_file
+                        project_name, build_number, matched_file_name
                     );
 
                     if copy(&matched, &to) {
-                        filenames.push(final_file.to_owned());
+                        filenames.push(matched_file_name.to_owned());
                         success = true;
                     }
                 }
-            } else {
-                let to = format!(
-                    "data/archive/{}/{}/{}",
-                    project_name, build_number, matched_file_name
-                );
-
-                if copy(&matched, &to) {
-                    filenames.push(matched_file_name.to_owned());
-                    success = true;
-                }
             }
         }
-    }
 
-    if success {
-        save_project_build_data(
-            project_name.to_owned(),
-            "passing".to_owned(),
-            database,
-            filenames,
-        )
-        .await;
+        if success {
+            save_project_build_data(
+                project_name.to_owned(),
+                "passing".to_owned(),
+                database,
+                filenames,
+            )
+            .await;
+        }
     }
 
     success
@@ -289,29 +298,31 @@ async fn save_project_build_data(
     archived_files: Vec<String>,
 ) {
     let p_id = get_project_id(&database, &project);
-    let mut build_num = get_build_number(&database, p_id);
+    if let Some(p_id) = p_id {
+        let mut build_num = get_build_number(&database, p_id);
 
-    // Increment if build number is greater than 1
-    if build_num < 1 {
-        build_num += 1;
-    }
+        // Increment if build number is greater than 1
+        if build_num < 1 {
+            build_num += 1;
+        }
 
-    let sep_files = archived_files.join(", ");
+        let sep_files = archived_files.join(", ");
 
-    if let Err(why) = insert_into(build::builds)
-        .values((
-            build::project_id.eq(p_id),
-            build::build_number.eq(build_num),
-            build::branch.eq("master".to_owned()),
-            build::files.eq(sep_files),
-            build::status.eq(status),
-        ))
-        .execute(database)
-    {
-        eprintln!(
-            "Error on insert of build {} for {}! {}",
-            build_num, project, why
-        )
+        if let Err(why) = insert_into(build::builds)
+            .values((
+                build::project_id.eq(p_id),
+                build::build_number.eq(build_num),
+                build::branch.eq("master".to_owned()),
+                build::files.eq(sep_files),
+                build::status.eq(status),
+            ))
+            .execute(database)
+        {
+            eprintln!(
+                "Error on insert of build {} for {}! {}",
+                build_num, project, why
+            )
+        }
     }
 }
 
@@ -537,25 +548,25 @@ fn get_project_status_badge(status: String) -> String {
 }
 
 /// Gets the project id of given project
-pub fn get_project_id(connection: &MysqlConnection, project: &str) -> i32 {
+pub fn get_project_id(connection: &MysqlConnection, project: &str) -> Option<i32> {
     let result = proj::projects
         .filter(proj::project_name.eq(project))
         .limit(1)
         .load::<Project>(connection)
         .expect("Error getting project id!");
 
-    result.first().unwrap().project_id
+    Some(result.first()?.project_id)
 }
 
 /// Gets the project name of a given project id
-pub fn get_project_name(connection: &MysqlConnection, pid: i32) -> String {
+pub fn get_project_name(connection: &MysqlConnection, pid: i32) -> Option<String> {
     let result = proj::projects
         .filter(proj::project_id.eq(pid))
         .limit(1)
         .load::<Project>(connection)
         .expect("Error getting project name from id!");
 
-    result.first().unwrap().project_name.clone()
+    Some(result.first()?.project_name.to_owned())
 }
 
 /// Gets the latest build number of a given project
@@ -605,7 +616,7 @@ pub fn get_status_for_build(connection: &MysqlConnection, pid: i32, build_num: i
 }
 
 /// Retrieves the data of a project in ProjectData format
-pub fn get_project_data(connection: &MysqlConnection, pid: i32) -> ProjectData {
+pub fn get_project_data(connection: &MysqlConnection, pid: i32) -> Option<ProjectData> {
     let result = build::builds
         .filter(build::project_id.eq(pid))
         .limit(10)
@@ -629,10 +640,10 @@ pub fn get_project_data(connection: &MysqlConnection, pid: i32) -> ProjectData {
         });
     }
 
-    ProjectData {
-        project: project_name,
+    Some(ProjectData {
+        project: project_name?,
         builds: build_data_vec,
-    }
+    })
 }
 
 #[cfg(test)]

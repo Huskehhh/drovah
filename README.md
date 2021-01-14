@@ -46,7 +46,7 @@ You have two _required_ settings to configure, the database and the github secre
 
 Simply create a ``.env`` containing the following
 
-```
+```env
 DATABASE_URL=mysql://user:pass@localhost:3306
 GITHUB_SECRET=secretgoeshere
 ```

@@ -50,8 +50,10 @@ pub(crate) async fn get_project_information(
         if path.is_dir() {
             if let Ok(file_name) = entry.file_name().into_string() {
                 let project_id = get_project_id(&database, &file_name);
-                let project_data = get_project_data(&database, project_id);
-                projects.push(project_data);
+                if let Some(project_id) = project_id {
+                    let project_data = get_project_data(&database, project_id);
+                    projects.push(project_data);
+                }
             }
         }
     }
@@ -68,12 +70,14 @@ pub(crate) async fn get_latest_status_badge(
     database: Data<MysqlConnection>,
 ) -> HttpResponse {
     let project_id = get_project_id(&database, &project.into_inner().0);
-    let latest_status = get_latest_build_status(&database, project_id);
 
-    let badge = get_project_status_badge(latest_status);
+    if let Some(project_id) = project_id {
+        let latest_status = get_latest_build_status(&database, project_id);
+        let badge = get_project_status_badge(latest_status);
 
-    if !badge.is_empty() {
-        return HttpResponse::Ok().content_type("image/svg+xml").body(badge);
+        if !badge.is_empty() {
+            return HttpResponse::Ok().content_type("image/svg+xml").body(badge);
+        }
     }
 
     HttpResponse::NotFound().finish()
@@ -90,13 +94,15 @@ pub(crate) async fn get_status_badge_for_build(
     let build = inner.1;
     let project_id = get_project_id(&database, &project);
 
-    let status = get_status_for_build(&database, project_id, build);
-    let status_badge = get_project_status_badge(status);
+    if let Some(project_id) = project_id {
+        let status = get_status_for_build(&database, project_id, build);
+        let status_badge = get_project_status_badge(status);
 
-    if !status_badge.is_empty() {
-        return HttpResponse::Ok()
-            .content_type("image/svg+xml")
-            .body(status_badge);
+        if !status_badge.is_empty() {
+            return HttpResponse::Ok()
+                .content_type("image/svg+xml")
+                .body(status_badge);
+        }
     }
 
     HttpResponse::NotFound().finish()
@@ -166,7 +172,7 @@ pub(crate) async fn get_latest_file(
     database: Data<MysqlConnection>,
 ) -> actix_web::Result<NamedFile> {
     let project = project.into_inner().0;
-    let project_id = get_project_id(&database, &project);
+    let project_id = get_project_id(&database, &project).unwrap();
 
     let build_number = get_build_number(&database, project_id);
 
