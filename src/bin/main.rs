@@ -2,11 +2,10 @@ extern crate actix_web;
 extern crate dotenv;
 
 use dotenv::dotenv;
+use drovah::launch_webserver;
 
 use std::path::Path;
 use std::{fs, io};
-
-use drovah::launch_webserver;
 
 #[actix_rt::main]
 async fn main() -> io::Result<()> {
@@ -29,8 +28,8 @@ async fn main() -> io::Result<()> {
 
     if !path.exists() {
         let default_file = r#"
-        address = "127.0.0.1:8000"
-        mysql_connection_string = "mysql://user:pass@localhost:3306/dbname"
+address = "127.0.0.1:8000"
+mysql_connection_string = "mysql://user:pass@localhost:3306/dbname"
         "#;
 
         if let Err(e) = fs::write(path, default_file) {
