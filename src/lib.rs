@@ -91,13 +91,6 @@ struct PostArchiveConfig {
     commands: Vec<String>,
 }
 
-/// Represents the configuration of drovah (drovah.toml)
-#[derive(Debug, Deserialize)]
-struct DrovahConfig {
-    address: String,
-    mysql_connection_string: String,
-}
-
 /// Method to run a build for a project
 /// Takes the project name (String) and ref to database (&Database) to store result
 async fn run_build(project: String, database: &MysqlConnection) -> Result<(), Box<dyn Error>> {
@@ -254,13 +247,13 @@ pub async fn launch_webserver() -> io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
-    let conf_str = fs::read_to_string(Path::new("drovah.toml")).unwrap();
-    let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
+    let bind_address = env::var("BIND_ADDRESS").unwrap_or("127.0.0.1:8000".to_owned());
 
     HttpServer::new(move || {
-        let drovah_config: DrovahConfig = toml::from_str(&conf_str).unwrap();
-        let mysql = MysqlConnection::establish(&drovah_config.address)
-            .expect("Error when trying to connect to database");
+        let db_url =
+            env::var("DATABASE_URL").expect("No DATABASE_URL environment variable defined!");
+        let mysql =
+            MysqlConnection::establish(&db_url).expect("Error when trying to connect to database");
 
         // Create app
         App::new()
@@ -283,7 +276,7 @@ pub async fn launch_webserver() -> io::Result<()> {
             .service(actix_files::Files::new("/", "static/dist/").show_files_listing())
             .wrap(Logger::default())
     })
-    .bind(drovah_config.address)?
+    .bind(bind_address)?
     .run()
     .await
 }
