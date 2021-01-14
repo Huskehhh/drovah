@@ -7,5 +7,5 @@ CREATE TABLE `builds` (
   `status` text NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
-ALTER TABLE `builds`
-  ADD PRIMARY KEY (`build_id`);
+ALTER TABLE `builds` ADD PRIMARY KEY (`build_id`);
+ALTER TABLE `builds` CHANGE `build_id` `build_id` INT(11) NOT NULL AUTO_INCREMENT; 
