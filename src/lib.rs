@@ -93,7 +93,7 @@ struct PostArchiveConfig {
 
 /// Method to run a build for a project
 /// Takes the project name (String) and ref to database (&Database) to store result
-async fn run_build(project: String, database: &MysqlConnection) -> Result<(), Box<dyn Error>> {
+fn run_build(project: String, database: &MysqlConnection) -> Result<(), Box<dyn Error>> {
     println!("Building '{}'", project);
     let project_path = format!("data/projects/{}", project);
     let path = Path::new(&project_path);
@@ -119,9 +119,7 @@ async fn run_build(project: String, database: &MysqlConnection) -> Result<(), Bo
                     project_id.unwrap(),
                     database,
                     files.append_buildnumber,
-                )
-                .await
-                {
+                ) {
                     println!("Successfully archived files for '{}'", project);
 
                     if let Some(post_archive) = ci_config.postarchive {
@@ -138,11 +136,11 @@ async fn run_build(project: String, database: &MysqlConnection) -> Result<(), Bo
                     println!("Failed to archive files for '{}'", project);
                 }
             } else {
-                save_project_build_data(project, "passing".to_owned(), database, vec![]).await;
+                save_project_build_data(project, "passing".to_owned(), database, vec![]);
             }
         } else {
             println!("'{}' has failed to build.", project);
-            save_project_build_data(project, "failing".to_owned(), database, vec![]).await;
+            save_project_build_data(project, "failing".to_owned(), database, vec![]);
         }
     }
     Ok(())
@@ -150,7 +148,7 @@ async fn run_build(project: String, database: &MysqlConnection) -> Result<(), Bo
 
 /// Archives nominated files for a project
 /// Files are stored in 'data/archive/<project>/<build number>/
-async fn archive_files(
+fn archive_files(
     files_to_archive: Vec<String>,
     project_id: i32,
     database: &MysqlConnection,
@@ -171,7 +169,7 @@ async fn archive_files(
         let mut build_number = get_build_number(&database, project_id);
 
         // If build number is not one, we need to increment it
-        if build_number != 1 {
+        if build_number >= 1 {
             build_number += 1;
         }
 
@@ -242,12 +240,16 @@ async fn archive_files(
                 "passing".to_owned(),
                 database,
                 filenames,
-            )
-            .await;
+            );
         }
     }
 
     success
+}
+
+pub fn create_connection() -> MysqlConnection {
+    let db_url = env::var("DATABASE_URL").expect("No DATABASE_URL environment variable defined!");
+    MysqlConnection::establish(&db_url).expect("Error when trying to connect to database")
 }
 
 /// Launches the actix webserver
@@ -259,10 +261,7 @@ pub async fn launch_webserver() -> io::Result<()> {
     let bind_address = env::var("BIND_ADDRESS").unwrap_or("127.0.0.1:8000".to_owned());
 
     HttpServer::new(move || {
-        let db_url =
-            env::var("DATABASE_URL").expect("No DATABASE_URL environment variable defined!");
-        let mysql =
-            MysqlConnection::establish(&db_url).expect("Error when trying to connect to database");
+        let mysql = create_connection();
 
         // Create app
         App::new()
@@ -291,7 +290,7 @@ pub async fn launch_webserver() -> io::Result<()> {
 }
 
 /// Saves project build data to database
-async fn save_project_build_data(
+fn save_project_build_data(
     project: String,
     status: String,
     database: &MysqlConnection,
@@ -301,8 +300,7 @@ async fn save_project_build_data(
     if let Some(p_id) = p_id {
         let mut build_num = get_build_number(&database, p_id);
 
-        // Increment if build number is greater than 1
-        if build_num < 1 {
+        if build_num >= 1 {
             build_num += 1;
         }
 

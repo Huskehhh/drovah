@@ -14,7 +14,7 @@ use diesel::MysqlConnection;
 use serde_json::json;
 
 use crate::{
-    get_build_number, get_latest_build_status, get_project_data, get_project_id,
+    create_connection, get_build_number, get_latest_build_status, get_project_data, get_project_id,
     get_project_status_badge, get_status_for_build, run_build, run_commands,
     verify_authentication_header, WebhookData,
 };
@@ -113,7 +113,6 @@ pub(crate) async fn get_status_badge_for_build(
 /// however, would support others as long as they adhere to format
 /// URL is <host>:<port>/webhook
 pub(crate) async fn github_webhook(
-    database: Data<MysqlConnection>,
     request: web::HttpRequest,
     body: web::Bytes,
 ) -> actix_web::Result<HttpResponse> {
@@ -129,12 +128,20 @@ pub(crate) async fn github_webhook(
     let project_path = format!("data/projects/{}/", &webhookdata.repository.name);
     let path = Path::new(&project_path);
     if path.exists() {
-        let commands = vec!["git pull".to_owned()];
-        run_commands(commands, &project_path, false);
+        tokio::spawn(async move {
+            let commands = vec!["git pull".to_owned()];
+            run_commands(commands, &project_path, false);
 
-        if let Err(e) = run_build(webhookdata.repository.name.clone(), &database).await {
-            eprintln!("Error! {}", e);
-        }
+            // Hacky fix to run the build async, so we can reply to the web request
+            let database = create_connection();
+
+            if let Err(e) = run_build(webhookdata.repository.name, &database) {
+                eprintln!("Error! {}", e);
+            }
+
+            // Hacky fix, drop the database when we finished... theoretically ddos-able but ¯\_(ツ)_/¯ until better idea
+            std::mem::drop(database);
+        });
 
         return actix_web::Result::Ok(HttpResponse::NoContent().finish());
     }
