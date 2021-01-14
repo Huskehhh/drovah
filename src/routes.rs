@@ -13,11 +13,15 @@ use actix_web::{web, HttpResponse};
 use diesel::MysqlConnection;
 use serde_json::json;
 
+use diesel::r2d2::{self, ConnectionManager};
+
 use crate::{
-    create_connection, get_build_number, get_latest_build_status, get_project_data, get_project_id,
+    get_build_number, get_latest_build_status, get_project_data, get_project_id,
     get_project_status_badge, get_status_for_build, run_build, run_commands,
     verify_authentication_header, WebhookData,
 };
+
+type DbPool = r2d2::Pool<ConnectionManager<MysqlConnection>>;
 
 /// Returns specific file
 /// URL is <host>:<port>/<project>/<build>/<file>
@@ -38,10 +42,9 @@ pub(crate) async fn get_file_for_build(
 
 /// Returns project information for current path
 /// URL is <host>:<port>/api/projects
-pub(crate) async fn get_project_information(
-    database: Data<MysqlConnection>,
-) -> actix_web::Result<HttpResponse> {
+pub(crate) async fn get_project_information(pool: Data<DbPool>) -> actix_web::Result<HttpResponse> {
     let dir = Path::new("data/projects/");
+    let database = pool.get().expect("couldn't get db connection from pool");
 
     let mut projects = vec![];
     for entry in fs::read_dir(dir)? {
@@ -67,8 +70,9 @@ pub(crate) async fn get_project_information(
 /// URL is <host>:<port>/<project>/badge
 pub(crate) async fn get_latest_status_badge(
     project: web::Path<(String,)>,
-    database: Data<MysqlConnection>,
+    pool: Data<DbPool>,
 ) -> HttpResponse {
+    let database = pool.get().expect("couldn't get db connection from pool");
     let project_id = get_project_id(&database, &project.into_inner().0);
 
     if let Some(project_id) = project_id {
@@ -87,8 +91,9 @@ pub(crate) async fn get_latest_status_badge(
 /// URL is <host>:<port>/<project>/<build>/badge
 pub(crate) async fn get_status_badge_for_build(
     path: web::Path<(String, i32)>,
-    database: Data<MysqlConnection>,
+    pool: Data<DbPool>,
 ) -> HttpResponse {
+    let database = pool.get().expect("couldn't get db connection from pool");
     let inner = path.into_inner();
     let project = inner.0;
     let build = inner.1;
@@ -115,6 +120,7 @@ pub(crate) async fn get_status_badge_for_build(
 pub(crate) async fn github_webhook(
     request: web::HttpRequest,
     body: web::Bytes,
+    pool: Data<DbPool>,
 ) -> actix_web::Result<HttpResponse> {
     // Begin github secret auth
     let body: Vec<u8> = body.to_vec();
@@ -132,15 +138,11 @@ pub(crate) async fn github_webhook(
             let commands = vec!["git pull".to_owned()];
             run_commands(commands, &project_path, false);
 
-            // Hacky fix to run the build async, so we can reply to the web request
-            let database = create_connection();
+            let database = pool.get().expect("couldn't get db connection from pool");
 
             if let Err(e) = run_build(webhookdata.repository.name, &database) {
                 eprintln!("Error! {}", e);
             }
-
-            // Hacky fix, drop the database when we finished... theoretically ddos-able but ¯\_(ツ)_/¯ until better idea
-            std::mem::drop(database);
         });
 
         return actix_web::Result::Ok(HttpResponse::NoContent().finish());
@@ -176,8 +178,9 @@ fn get_headers_hash_map(map: &HeaderMap) -> Result<HashMap<String, String>, Http
 /// <host>:<port>/<project>/latest
 pub(crate) async fn get_latest_file(
     project: web::Path<(String,)>,
-    database: Data<MysqlConnection>,
+    pool: Data<DbPool>,
 ) -> actix_web::Result<NamedFile> {
+    let database = pool.get().expect("couldn't get db connection from pool");
     let project = project.into_inner().0;
     let project_id = get_project_id(&database, &project).unwrap();
 

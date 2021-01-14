@@ -27,6 +27,8 @@ use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use std::error::Error;
 
+use diesel::r2d2::{self, ConnectionManager};
+
 use crate::schema::builds::dsl as build;
 use crate::schema::projects::dsl as proj;
 
@@ -242,11 +244,6 @@ fn archive_files(
     success
 }
 
-pub fn create_connection() -> MysqlConnection {
-    let db_url = env::var("DATABASE_URL").expect("No DATABASE_URL environment variable defined!");
-    MysqlConnection::establish(&db_url).expect("Error when trying to connect to database")
-}
-
 /// Launches the actix webserver
 /// Takes configuration from drovah.toml
 pub async fn launch_webserver() -> io::Result<()> {
@@ -256,11 +253,16 @@ pub async fn launch_webserver() -> io::Result<()> {
     let bind_address = env::var("BIND_ADDRESS").unwrap_or("127.0.0.1:8000".to_owned());
 
     HttpServer::new(move || {
-        let mysql = create_connection();
+        let db_url =
+            env::var("DATABASE_URL").expect("No DATABASE_URL environment variable defined!");
+        let manager = ConnectionManager::<MysqlConnection>::new(db_url);
+        let pool = r2d2::Pool::builder()
+            .build(manager)
+            .expect("Failed to create pool.");
 
         // Create app
         App::new()
-            .data(mysql)
+            .data(pool)
             .wrap(middleware::Logger::default())
             .service(
                 web::resource("/{project}/badge").route(web::get().to(get_latest_status_badge)),
