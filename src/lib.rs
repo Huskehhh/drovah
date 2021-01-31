@@ -564,7 +564,7 @@ pub fn get_project_name(connection: &MysqlConnection, pid: i32) -> Option<String
 pub fn get_build_number(connection: &MysqlConnection, pid: i32) -> i32 {
     let result = build::builds
         .filter(build::project_id.eq(pid))
-        .limit(1)
+        .order(build::build_number.desc())
         .load::<Build>(connection)
         .expect("Error getting project name from id!");
 
