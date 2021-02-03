@@ -1,7 +1,4 @@
-FROM rust:1.49-alpine as build
-
-RUN apk add alpine-sdk
-RUN apk add mariadb-dev
+FROM rust:1.49.0 as builder
 
 WORKDIR /usr/src/drovah
 COPY . .
@@ -10,8 +7,15 @@ RUN cargo install --path .
 
 FROM alpine:latest
 
-RUN apk add mariadb-dev
+RUN apk add --no-cache \
+        ca-certificates \
+        gcc \ 
+        mariadb-dev
 
-COPY --from=build /usr/local/cargo/bin/drovah /usr/local/bin/drovah
+COPY --from=builder /usr/local/cargo/bin/drovah /usr/local/bin/drovah
+
+COPY .env /.env
+COPY static /static
+COPY migrations /migrations
 
 CMD ["drovah"]
