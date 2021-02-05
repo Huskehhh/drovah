@@ -1,4 +1,7 @@
-# drovah ![build status](https://ci.husk.pro/drovah/badge)
+# drovah
+
+![build status](https://ci.husk.pro/drovah/badge)
+![docker pulls](https://img.shields.io/docker/pulls/jordynnewnham/drovah)
 
 Simple, fast, standalone continuous integration service written in Rust
 
@@ -28,19 +31,27 @@ If you want a feature I don't current have planned, please create an issue!
 
 ## Setup
 
-### drovah
-
 Prerequisites:
 
 - git
 - MySQL server
 - npm
 
+## From source
+
 Clone the repo and run using ``./run.sh`` - default server will be running at ``http://localhost:8000``
 
 For production use, I recommend binding drovah to localhost and creating a reverse proxy from nginx/apache.
 
-#### drovah configuration
+## From docker
+
+First off I apologise, it's truly a bit more work than I would like setting this up, and I aim to improve that in the future!
+
+1. Pull the available image [here](https://hub.docker.com/repository/docker/jordynnewnham/drovah)
+2. Refer to ``MySQL setup``
+3. Set required ENV variables and run!
+
+## Configuration
 
 You have two _required_ settings to configure, the database and the github secret! Although optionally you can change the bind address
 
@@ -55,7 +66,7 @@ Note for ``GITHUB_SECRET``, use something like ``ruby -rsecurerandom -e 'puts Se
 
 And if you wish to change the bind address, add ``BIND_ADDRESS=127.0.0.1:8080``
 
-#### MySQL setup
+### MySQL setup
 
 1. Install [diesel_cli](https://github.com/diesel-rs/diesel/tree/master/diesel_cli)
 2. Run ``diesel migration run``
