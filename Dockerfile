@@ -5,17 +5,14 @@ COPY . .
 
 RUN cargo install --path .
 
-FROM alpine:latest
+FROM debian:latest
 
-RUN apk add --no-cache \
-        ca-certificates \
-        gcc \ 
-        mariadb-dev
+RUN apt-get update && apt-get upgrade -y
+RUN apt-get install mariadb-client -y
 
-COPY --from=builder /usr/local/cargo/bin/drovah /usr/local/bin/drovah
+COPY --from=builder /usr/local/cargo/bin/drovah /
 
-COPY .env /.env
 COPY static /static
 COPY migrations /migrations
 
-CMD ["drovah"]
+CMD ["./drovah"]
