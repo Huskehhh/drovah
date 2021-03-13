@@ -19,6 +19,7 @@ use badge::{Badge, BadgeOptions};
 use diesel::MysqlConnection;
 use hmac::{Hmac, Mac, NewMac};
 use models::{Build, Project};
+use once_cell::sync::Lazy;
 use routes::{
     get_file_for_build, get_latest_file, get_latest_status_badge, get_project_information,
     get_status_badge_for_build, github_webhook, index,
@@ -26,6 +27,8 @@ use routes::{
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use std::error::Error;
+
+use dashmap::DashMap;
 
 use diesel::r2d2::{self, ConnectionManager};
 
@@ -35,6 +38,9 @@ use crate::schema::projects::dsl as proj;
 pub mod models;
 mod routes;
 pub mod schema;
+
+pub static NAME_CACHE: Lazy<DashMap<i32, String>> = Lazy::new(|| DashMap::new());
+pub static PROJECT_CACHE: Lazy<DashMap<i32, ProjectData>> = Lazy::new(|| DashMap::new());
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -51,14 +57,14 @@ struct RepositoryData {
 }
 
 /// Represents data to be provided through 'get_project_information'
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ProjectData {
     project: String,
     builds: Vec<BuildData>,
 }
 
 /// Represents stored build data
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildData {
     build_number: i32,
@@ -107,6 +113,9 @@ fn run_build(project: String, database: &MysqlConnection) -> Result<(), Box<dyn 
         let ci_settings_file = Path::new(&settings_file_path);
         let settings_string = fs::read_to_string(ci_settings_file)?;
         let ci_config: CIConfig = toml::from_str(&settings_string)?;
+
+        // Remove the project from the project cache so the new build is picked up
+        PROJECT_CACHE.remove(&project_id.unwrap());
 
         if run_commands(
             ci_config.build.commands,
@@ -550,14 +559,24 @@ pub fn get_project_id(connection: &MysqlConnection, project: &str) -> Option<i32
 }
 
 /// Gets the project name of a given project id
+/// Prioritises cache over db lookup
 pub fn get_project_name(connection: &MysqlConnection, pid: i32) -> Option<String> {
-    let result = proj::projects
-        .filter(proj::project_id.eq(pid))
-        .limit(1)
-        .load::<Project>(connection)
-        .expect("Error getting project name from id!");
+    if let Some(cache) = NAME_CACHE.get(&pid) {
+        Some(cache.clone())
+    } else {
+        let result = proj::projects
+            .filter(proj::project_id.eq(pid))
+            .limit(1)
+            .load::<Project>(connection)
+            .expect("Error getting project name from id!");
 
-    Some(result.first()?.project_name.to_owned())
+        let project_name = result.first()?.project_name.to_owned();
+
+        // Cache the result of db lookup
+        NAME_CACHE.insert(pid, project_name.clone());
+
+        return Some(project_name);
+    }
 }
 
 /// Gets the latest build number of a given project
@@ -608,33 +627,42 @@ pub fn get_status_for_build(connection: &MysqlConnection, pid: i32, build_num: i
 
 /// Retrieves the data of a project in ProjectData format
 pub fn get_project_data(connection: &MysqlConnection, pid: i32) -> Option<ProjectData> {
-    let result = build::builds
-        .filter(build::project_id.eq(pid))
-        .limit(10)
-        .load::<Build>(connection)
-        .expect("Error getting project name from id!");
+    if let Some(cached_result) = PROJECT_CACHE.get(&pid) {
+        Some(cached_result.clone())
+    } else {
+        let result = build::builds
+            .filter(build::project_id.eq(pid))
+            .limit(10)
+            .load::<Build>(connection)
+            .expect("Error getting project name from id!");
 
-    let project_name = get_project_name(connection, pid);
+        let project_name = get_project_name(connection, pid);
 
-    let mut build_data_vec = vec![];
-    for build in result {
-        let split_files = build
-            .files
-            .split_terminator(", ")
-            .map(|s| s.to_owned())
-            .collect::<Vec<String>>();
+        let mut build_data_vec = vec![];
+        for build in result {
+            let split_files = build
+                .files
+                .split_terminator(", ")
+                .map(|s| s.to_owned())
+                .collect::<Vec<String>>();
 
-        build_data_vec.push(BuildData {
-            build_number: build.build_number,
-            build_status: build.status,
-            archived_files: split_files,
-        });
+            build_data_vec.push(BuildData {
+                build_number: build.build_number,
+                build_status: build.status,
+                archived_files: split_files,
+            });
+        }
+
+        let project_data = ProjectData {
+            project: project_name?,
+            builds: build_data_vec,
+        };
+
+        // Cache result so next time we can avoid this computation
+        PROJECT_CACHE.insert(pid, project_data.clone());
+
+        Some(project_data)
     }
-
-    Some(ProjectData {
-        project: project_name?,
-        builds: build_data_vec,
-    })
 }
 
 #[cfg(test)]
