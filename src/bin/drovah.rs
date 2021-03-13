@@ -7,7 +7,7 @@ use drovah::launch_webserver;
 use std::path::Path;
 use std::{fs, io};
 
-#[actix_rt::main]
+#[actix_web::main]
 async fn main() -> io::Result<()> {
     dotenv().ok();
 
