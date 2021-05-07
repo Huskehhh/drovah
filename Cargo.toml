@@ -15,7 +15,7 @@ badge = "0.3.0"
 tokio = { version = "1.0", features = ["full"] }
 dotenv = "0.15.0"
 env_logger = "0.8.1"
-hmac = "0.10"
+hmac = "0.11"
 sha-1 = "0.9"
 hex = "0.4"
 diesel = { version = "1.4.4", features = ["mysql", "r2d2"] }
