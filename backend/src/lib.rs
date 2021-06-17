@@ -659,24 +659,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_file_matching() {
-        let file_to_find = ".drovah";
-        let path = match_filename_to_file(file_to_find);
-        assert!(path.is_some());
-
-        let file_to_find = ".doesnt exist";
-        let path = match_filename_to_file(file_to_find);
-
-        assert!(path.is_none());
-
-        let file_to_find = "./.dro";
-        let path = match_filename_to_file(file_to_find);
-
-        assert!(path.is_some());
-        assert_eq!(path.unwrap(), String::from("./.drovah"));
-    }
-
-    #[test]
     fn test_file_append_build_number() {
         let matched_file_name = "project-v2.1.zip";
         let ext = Path::new(matched_file_name)
