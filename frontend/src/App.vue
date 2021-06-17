@@ -28,6 +28,8 @@
 <script>
 import Project from './components/Project.vue'
 
+const API_URL = process.env.VUE_APP_API_URL;
+
 export default {
   name: 'App',
   components: {
@@ -42,7 +44,7 @@ export default {
 
   mounted() {
     this.$http
-        .get('/api/projects')
+        .get(API_URL + '/api/v1/projects')
         .then(response => (this.projects = response.data.projects))
         .finally(() => {
           this.loading = false;

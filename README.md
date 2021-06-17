@@ -1,6 +1,6 @@
 # drovah
 
-![build status](https://ci.husk.pro/drovah/badge)
+![build status](https://github.com/Huskehhh/drovah/actions/workflows/ci.yml/badge.svg)
 ![docker pulls](https://img.shields.io/docker/pulls/jordynnewnham/drovah)
 
 Simple, fast, standalone continuous integration service written in Rust
@@ -8,10 +8,6 @@ Simple, fast, standalone continuous integration service written in Rust
 This project is entirely for fun and building on my rust knowledge, however, was created for the purpose of being an ultra lightweight, fast and painless implementation of a continuous integration service.
 
 drovah comes with a basic frontend that will allow you to download any archived files as well as view past build statuses!
-
-## Demo
-
-[Demo available here](https://ci.husk.pro/)
 
 ## Development
 
@@ -33,19 +29,29 @@ If you want a feature I don't current have planned, please create an issue!
 
 Prerequisites:
 
+- Rust
 - git
 - MySQL server
 - npm
 
 ## From source
 
-Clone the repo and run using ``./run.sh`` - default server will be running at ``http://localhost:8000``
+### backend
 
-For production use, I recommend binding drovah to localhost and creating a reverse proxy from nginx/apache.
+1. ``cd backend``
+2. ``cargo build --release``
+3. Done.
+
+### Frontend
+
+1. ``cd frontend``
+2. ``npm install``
+3. ``npm run build``
+4. Done.
 
 ## From docker
 
-First off I apologise, it's truly a bit more work than I would like setting this up, and I aim to improve that in the future!
+First off I apologise, it's a bit more work than I would like setting this up, and I aim to improve that in the future!
 
 1. Pull the available image [here](https://hub.docker.com/repository/docker/jordynnewnham/drovah)
 2. Refer to ``MySQL setup``
@@ -68,8 +74,8 @@ And if you wish to change the bind address, add ``BIND_ADDRESS=127.0.0.1:8080``
 
 ### MySQL setup
 
-1. Install [diesel_cli](https://github.com/diesel-rs/diesel/tree/master/diesel_cli)
-2. Run ``diesel migration run``
+1. Install [diesel_cli](https://github.com/diesel-rs/diesel/)
+2. Run ``diesel migration run`` in the `backend` directory
 3. Done
 
 ### In your project
@@ -115,7 +121,7 @@ Similarly, just remove the folders you no longer want to track
 
 ## Webhook
 
-The webhook by default is available at ``http://localhost:8000/webhook``
+The webhook by default is available at ``http://<host>:<port>/webhook``
 
 This webhook is targetted at GitHub, and can be set up using the ``application/json`` payload.
 

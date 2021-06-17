@@ -1,20 +1,15 @@
-extern crate actix_files;
-extern crate actix_web;
-
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use actix_files::NamedFile;
-use actix_web::http::header::HeaderMap;
-use actix_web::http::StatusCode;
 use actix_web::web::Data;
-use actix_web::{web, HttpResponse};
+use actix_web::{get, post, web, HttpResponse};
 use diesel::MysqlConnection;
 use serde_json::json;
 
 use diesel::r2d2::{self, ConnectionManager};
 
+use crate::get_headers_hash_map;
 use crate::{
     get_build_number, get_latest_build_status, get_project_data, get_project_id,
     get_project_status_badge, get_status_for_build, run_build, run_commands,
@@ -24,7 +19,7 @@ use crate::{
 type DbPool = r2d2::Pool<ConnectionManager<MysqlConnection>>;
 
 /// Returns specific file
-/// URL is <host>:<port>/<project>/<build>/<file>
+#[get("/api/v1/{project}/{build}/{file}")]
 pub(crate) async fn get_file_for_build(
     path: web::Path<(String, String, String)>,
 ) -> actix_web::Result<NamedFile> {
@@ -42,6 +37,7 @@ pub(crate) async fn get_file_for_build(
 
 /// Returns project information for current path
 /// URL is <host>:<port>/api/projects
+#[get("/api/v1/projects")]
 pub(crate) async fn get_project_information(pool: Data<DbPool>) -> actix_web::Result<HttpResponse> {
     let dir = Path::new("data/projects/");
     let database = pool.get().expect("couldn't get db connection from pool");
@@ -67,7 +63,7 @@ pub(crate) async fn get_project_information(pool: Data<DbPool>) -> actix_web::Re
 }
 
 /// Returns latest status badge for given project
-/// URL is <host>:<port>/<project>/badge
+#[get("/api/v1/{project}/badge")]
 pub(crate) async fn get_latest_status_badge(
     project: web::Path<(String,)>,
     pool: Data<DbPool>,
@@ -88,7 +84,7 @@ pub(crate) async fn get_latest_status_badge(
 }
 
 /// Returns status badge for specific build
-/// URL is <host>:<port>/<project>/<build>/badge
+#[get("/api/v1/{project}/{build}/badge")]
 pub(crate) async fn get_status_badge_for_build(
     path: web::Path<(String, i32)>,
     pool: Data<DbPool>,
@@ -117,6 +113,7 @@ pub(crate) async fn get_status_badge_for_build(
 /// targeted towards GitHub's webhook
 /// however, would support others as long as they adhere to format
 /// URL is <host>:<port>/webhook
+#[post("/api/v1/webhook")]
 pub(crate) async fn github_webhook(
     request: web::HttpRequest,
     body: web::Bytes,
@@ -151,31 +148,9 @@ pub(crate) async fn github_webhook(
     actix_web::Result::Ok(HttpResponse::NotAcceptable().body("Project doesn't exist"))
 }
 
-/// Credit - https://github.com/Nukesor/webhook-server/blob/master/src/web.rs#L148
-fn get_headers_hash_map(map: &HeaderMap) -> Result<HashMap<String, String>, HttpResponse> {
-    let mut headers = HashMap::new();
-
-    for (key, header_value) in map.iter() {
-        let key = key.as_str().to_string();
-        let value: String;
-        match header_value.to_str() {
-            Ok(header_value) => value = header_value.to_string(),
-            Err(error) => {
-                let message = format!("Couldn't parse header: {}", error);
-                println!("{}", message);
-                return Err(HttpResponse::Unauthorized().body(message));
-            }
-        };
-
-        headers.insert(key, value);
-    }
-
-    Ok(headers)
-}
-
 /// Returns latest file
 /// If one does not exist, will just return an os error of not found
-/// <host>:<port>/<project>/latest
+#[get("/api/v1/{project}/latest")]
 pub(crate) async fn get_latest_file(
     project: web::Path<(String,)>,
     pool: Data<DbPool>,
@@ -191,22 +166,13 @@ pub(crate) async fn get_latest_file(
 
     let dir = fs::read_dir(path)?;
 
-    for file in dir {
-        if let Ok(unwrapped) = file {
-            if !unwrapped.path().extension().unwrap().eq("log") {
-                return actix_web::Result::Ok(NamedFile::open(unwrapped.path())?);
-            }
+    for file in dir.flatten() {
+        if !file.path().extension().unwrap().eq("log") {
+            return actix_web::Result::Ok(NamedFile::open(file.path())?);
         }
     }
 
     let file = NamedFile::open(fs::read_dir(path)?.last().unwrap()?.path())?;
 
     actix_web::Result::Ok(file)
-}
-
-/// Default path, returns the index file
-pub(crate) async fn index() -> actix_web::Result<HttpResponse> {
-    Ok(HttpResponse::build(StatusCode::OK)
-        .content_type("text/html; charset=utf-8")
-        .body(include_str!("../static/dist/index.html")))
 }
