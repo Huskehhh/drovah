@@ -1,4 +1,3 @@
-extern crate actix_files;
 extern crate actix_web;
 extern crate env_logger;
 #[macro_use]
@@ -21,7 +20,7 @@ use hmac::{Hmac, Mac, NewMac};
 use models::{Build, Project};
 use routes::{
     get_file_for_build, get_latest_file, get_latest_status_badge, get_project_information,
-    get_status_badge_for_build, github_webhook, index,
+    get_status_badge_for_build, github_webhook,
 };
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
@@ -277,7 +276,6 @@ pub async fn launch_webserver() -> io::Result<()> {
             )
             .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
             .service(web::resource("/webhook").route(web::post().to(github_webhook)))
-            .service(web::resource("/").route(web::get().to(index)))
             .service(actix_files::Files::new("/", "static/dist/").show_files_listing())
             .wrap(Logger::default())
     })
@@ -635,6 +633,28 @@ pub fn get_project_data(connection: &MysqlConnection, pid: i32) -> Option<Projec
         project: project_name?,
         builds: build_data_vec,
     })
+}
+
+/// Credit - https://github.com/Nukesor/webhook-server/blob/master/src/web.rs#L148
+pub fn get_headers_hash_map(map: &HeaderMap) -> Result<HashMap<String, String>, HttpResponse> {
+    let mut headers = HashMap::new();
+
+    for (key, header_value) in map.iter() {
+        let key = key.as_str().to_string();
+        let value: String;
+        match header_value.to_str() {
+            Ok(header_value) => value = header_value.to_string(),
+            Err(error) => {
+                let message = format!("Couldn't parse header: {}", error);
+                println!("{}", message);
+                return Err(HttpResponse::Unauthorized().body(message));
+            }
+        };
+
+        headers.insert(key, value);
+    }
+
+    Ok(headers)
 }
 
 #[cfg(test)]
