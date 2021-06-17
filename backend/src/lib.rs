@@ -1,18 +1,19 @@
-extern crate actix_web;
-extern crate env_logger;
 #[macro_use]
 extern crate diesel;
+extern crate actix_web;
+extern crate env_logger;
 
 use std::process::{Command, Stdio};
 use std::{collections::HashMap, ffi::OsStr};
 use std::{env, fs};
 use std::{fs::File, io, path::Path};
 
+use actix_web::http::HeaderMap;
 use diesel::{insert_into, prelude::*};
 
 use actix_web::{
     middleware::{self, Logger},
-    web, App, HttpResponse, HttpServer,
+    App, HttpResponse, HttpServer,
 };
 use badge::{Badge, BadgeOptions};
 use diesel::MysqlConnection;
@@ -23,7 +24,7 @@ use routes::{
     get_status_badge_for_build, github_webhook,
 };
 use serde::{Deserialize, Serialize};
-use sha1::Sha1;
+use sha2::Sha256;
 use std::error::Error;
 
 use diesel::r2d2::{self, ConnectionManager};
@@ -35,7 +36,7 @@ pub mod models;
 mod routes;
 pub mod schema;
 
-type HmacSha1 = Hmac<Sha1>;
+type HmacSha256 = Hmac<Sha256>;
 
 /// Represents data taken from github webhook
 #[derive(Debug, Deserialize)]
@@ -231,12 +232,7 @@ fn archive_files(
         }
 
         if success {
-            save_project_build_data(
-                project_name.to_owned(),
-                "passing".to_owned(),
-                database,
-                filenames,
-            );
+            save_project_build_data(project_name, "passing".to_owned(), database, filenames);
         }
     }
 
@@ -249,7 +245,7 @@ pub async fn launch_webserver() -> io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
-    let bind_address = env::var("BIND_ADDRESS").unwrap_or("127.0.0.1:8000".to_owned());
+    let bind_address = env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".to_owned());
 
     HttpServer::new(move || {
         let db_url =
@@ -263,20 +259,12 @@ pub async fn launch_webserver() -> io::Result<()> {
         App::new()
             .data(pool)
             .wrap(middleware::Logger::default())
-            .service(
-                web::resource("/{project}/badge").route(web::get().to(get_latest_status_badge)),
-            )
-            .service(web::resource("/{project}/latest").route(web::get().to(get_latest_file)))
-            .service(
-                web::resource("/{project}/{build}/badge")
-                    .route(web::get().to(get_status_badge_for_build)),
-            )
-            .service(
-                web::resource("/{project}/{build}/{file}").route(web::get().to(get_file_for_build)),
-            )
-            .service(web::resource("/api/projects").route(web::get().to(get_project_information)))
-            .service(web::resource("/webhook").route(web::post().to(github_webhook)))
-            .service(actix_files::Files::new("/", "static/dist/").show_files_listing())
+            .service(get_latest_status_badge)
+            .service(get_latest_file)
+            .service(get_status_badge_for_build)
+            .service(get_file_for_build)
+            .service(get_project_information)
+            .service(github_webhook)
             .wrap(Logger::default())
     })
     .bind(bind_address)?
@@ -371,10 +359,10 @@ fn verify_signature_header(
     }
 }
 
-/// Create a hmac SHA1 instance from a secret and body
-fn generate_signature_sha1(secret_bytes: &[u8], body: &[u8]) -> HmacSha1 {
+/// Create a hmac SHA256 instance from a secret and body
+fn generate_signature_sha1(secret_bytes: &[u8], body: &[u8]) -> HmacSha256 {
     let mut hmac =
-        HmacSha1::new_varkey(secret_bytes).expect("Couldn't create hmac with current secret");
+        HmacSha256::new_from_slice(secret_bytes).expect("Couldn't create hmac with current secret");
     hmac.update(body);
     hmac
 }
@@ -386,7 +374,7 @@ fn generate_signature_sha1(secret_bytes: &[u8], body: &[u8]) -> HmacSha1 {
 fn get_signature_header(headers: &HashMap<String, String>) -> Result<String, HttpResponse> {
     let mut header = headers.get("signature");
     if header.is_none() {
-        header = headers.get("x-hub-signature");
+        header = headers.get("x-hub-signature-256");
     }
 
     // We dont' find any headers for signatures and this method is not required
@@ -471,16 +459,14 @@ fn match_filename_to_file(filename: &str) -> Option<String> {
     // Find all files starting with
     if let Some(path_parent) = path.parent() {
         if let Ok(paths) = fs::read_dir(path_parent) {
-            for files in paths {
-                if let Ok(file) = files {
-                    if file
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with(&file_to_look_for)
-                    {
-                        let path = file.path().to_string_lossy().to_string();
-                        return Option::Some(path);
-                    }
+            for file in paths.flatten() {
+                if file
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(&file_to_look_for)
+                {
+                    let path = file.path().to_string_lossy().to_string();
+                    return Option::Some(path);
                 }
             }
         }
@@ -567,9 +553,9 @@ pub fn get_build_number(connection: &MysqlConnection, pid: i32) -> i32 {
         .expect("Error getting project name from id!");
 
     if let Some(first) = result.first() {
-        return first.build_number;
+        first.build_number
     } else {
-        return 0;
+        0
     }
 }
 
@@ -582,9 +568,9 @@ pub fn get_latest_build_status(connection: &MysqlConnection, pid: i32) -> String
         .expect("Error getting project name from id!");
 
     if let Some(first) = result.first() {
-        return first.status.to_owned();
+        first.status.to_string()
     } else {
-        return "failing".to_owned();
+        "failing".to_string()
     }
 }
 
@@ -598,9 +584,9 @@ pub fn get_status_for_build(connection: &MysqlConnection, pid: i32, build_num: i
         .expect("Error getting project name from id!");
 
     if let Some(first) = result.first() {
-        return first.status.to_owned();
+        first.status.to_string()
     } else {
-        return "failing".to_owned();
+        "failing".to_string()
     }
 }
 

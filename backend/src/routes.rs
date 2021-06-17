@@ -1,17 +1,15 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use actix_files::NamedFile;
-use actix_web::http::header::HeaderMap;
-use actix_web::http::StatusCode;
 use actix_web::web::Data;
-use actix_web::{web, HttpResponse, get, post};
+use actix_web::{get, post, web, HttpResponse};
 use diesel::MysqlConnection;
 use serde_json::json;
 
 use diesel::r2d2::{self, ConnectionManager};
 
+use crate::get_headers_hash_map;
 use crate::{
     get_build_number, get_latest_build_status, get_project_data, get_project_id,
     get_project_status_badge, get_status_for_build, run_build, run_commands,
@@ -168,11 +166,9 @@ pub(crate) async fn get_latest_file(
 
     let dir = fs::read_dir(path)?;
 
-    for file in dir {
-        if let Ok(unwrapped) = file {
-            if !unwrapped.path().extension().unwrap().eq("log") {
-                return actix_web::Result::Ok(NamedFile::open(unwrapped.path())?);
-            }
+    for file in dir.flatten() {
+        if !file.path().extension().unwrap().eq("log") {
+            return actix_web::Result::Ok(NamedFile::open(file.path())?);
         }
     }
 
