@@ -18,6 +18,8 @@
 </template>
 
 <script>
+const API_URL = process.env.VUE_APP_API_URL;
+
 export default {
   name: "ProjectModal",
   props: {
@@ -49,7 +51,7 @@ export default {
     },
 
     getBadgeForBuild: function (build) {
-      return "/" + this.projectName + "/" + build.buildNumber + "/badge";
+      return API_URL + "/api/v1/" + this.projectName + "/" + build.buildNumber + "/badge";
     },
 
     handleOk: function(bvModalEvt) {
@@ -57,7 +59,7 @@ export default {
     },
 
     buildHrefForFile: function(build, file) {
-      return "/" + this.projectName + "/" + build.buildNumber + "/" + file;
+      return API_URL + "/api/v1/" + this.projectName + "/" + build.buildNumber + "/" + file;
     },
 
     hasFiles: function (build) {

@@ -12,7 +12,10 @@
 </template>
 
 <script>
-import ProjectModal from "@/components/ProjectModal";
+import ProjectModal from "ProjectModal";
+
+const API_URL = process.env.VUE_APP_API_URL;
+
 export default {
   name: "Project",
   components: {ProjectModal},
@@ -32,10 +35,10 @@ export default {
       return result;
     },
     badgeUrl: function () {
-      return "/" + this.projectName + "/badge";
+      return API_URL + "/api/v1/" + this.projectName + "/badge";
     },
     latestBuild: function () {
-      return "/" + this.projectName + "/latest";
+      return API_URL + "/api/v1/" + this.projectName + "/latest";
     }
   },
 
